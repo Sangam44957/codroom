@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+
+  rooms    Room[]
+  problems Problem[]
+
+  @@map("users")
+}
+
+model Room {
+  id            String   @id @default(cuid())
+  title         String
+  status        String   @default("waiting")
+  language      String   @default("javascript")
+  candidateName String?
+  createdAt     DateTime @default(now())
+
+  createdById String
+  createdBy   User    @relation(fields: [createdById], references: [id])
+
+  problemId String?
+  problem   Problem? @relation(fields: [problemId], references: [id])
+
+  interview Interview?
+
+  @@map("rooms")
+}
+
+model Problem {
+  id          String  @id @default(cuid())
+  title       String
+  description String
+  difficulty  String
+  topic       String
+  starterCode String?
+  testCases   Json?
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  rooms Room[]
+
+  @@map("problems")
+}
+
+model Interview {
+  id        String    @id @default(cuid())
+  finalCode String?
+  language  String    @default("javascript")
+  status    String    @default("in_progress")
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  duration  Int?
+
+  roomId String @unique
+  room   Room   @relation(fields: [roomId], references: [id])
+
+  snapshots CodeSnapshot[]
+  notes     InterviewerNote[]
+  report    AIReport?
+
+  @@map("interviews")
+}
+
+model CodeSnapshot {
+  id        String   @id @default(cuid())
+  code      String
+  timestamp DateTime @default(now())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  @@map("code_snapshots")
+}
+
+model InterviewerNote {
+  id        String   @id @default(cuid())
+  content   String
+  createdAt DateTime @default(now())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  @@map("interviewer_notes")
+}
+
+model AIReport {
+  id               String   @id @default(cuid())
+  correctness      Int
+  codeQuality      Int
+  timeComplexity   String
+  spaceComplexity  String
+  edgeCaseHandling Int
+  overallScore     Int
+  recommendation   String
+  summary          String
+  improvements     String
+  createdAt        DateTime @default(now())
+
+  interviewId String    @unique
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  @@map("ai_reports")
+}
