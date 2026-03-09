@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
+import useSocket from "@/hooks/useSocket";
 
 export default function RoomPage() {
   const params = useParams();
@@ -16,6 +17,36 @@ export default function RoomPage() {
   const [code, setCode] = useState(LANGUAGE_CONFIG["javascript"].defaultCode);
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [userName, setUserName] = useState("");
+  const [role, setRole] = useState("candidate");
+  const [joined, setJoined] = useState(false);
+
+  // Socket connection
+  const {
+    isConnected,
+    users,
+    emitCodeChange,
+    emitLanguageChange,
+    emitCodeOutput,
+    onCodeUpdate,
+    onLanguageUpdate,
+    onOutputUpdate,
+  } = useSocket(joined ? roomId : null, userName, role);
+
+  // Register socket callbacks
+  useEffect(() => {
+    onCodeUpdate((newCode) => {
+      setCode(newCode);
+    });
+
+    onLanguageUpdate((newLang) => {
+      setLanguage(newLang);
+    });
+
+    onOutputUpdate((newOutput) => {
+      setOutput(newOutput);
+    });
+  }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate]);
 
   useEffect(() => {
     fetchRoom();
@@ -36,12 +67,46 @@ export default function RoomPage() {
       setCode(
         LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || ""
       );
+
+      // Check if current user is the interviewer
+      try {
+        const meRes = await fetch("/api/auth/me");
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          if (meData.user.userId === data.room.createdById) {
+            setRole("interviewer");
+            setUserName(meData.user.name);
+            setJoined(true);
+          }
+        }
+      } catch {
+        // Not logged in — will show join form
+      }
     } catch {
       setError("Failed to load room");
     } finally {
       setLoading(false);
     }
   }
+
+  // Handle code changes (local + emit)
+  const handleCodeChange = useCallback(
+    (newCode) => {
+      setCode(newCode);
+      emitCodeChange(newCode);
+    },
+    [emitCodeChange]
+  );
+
+  // Handle language changes (local + emit)
+  const handleLanguageChange = useCallback(
+    (newLang) => {
+      setLanguage(newLang);
+      setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
+      emitLanguageChange(newLang);
+    },
+    [emitLanguageChange]
+  );
 
   async function handleRunCode() {
     if (isRunning) return;
@@ -67,26 +132,40 @@ export default function RoomPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        setOutput({
+        const errOutput = {
           status: "error",
           output: data.error || "Execution failed",
           type: "Error",
-        });
+        };
+        setOutput(errOutput);
+        emitCodeOutput(errOutput);
         return;
       }
 
       setOutput(data);
+      emitCodeOutput(data);
     } catch {
-      setOutput({
+      const errOutput = {
         status: "error",
         output: "Failed to connect to execution server",
         type: "Error",
-      });
+      };
+      setOutput(errOutput);
+      emitCodeOutput(errOutput);
     } finally {
       setIsRunning(false);
     }
   }
 
+  // Handle candidate join
+  function handleJoin(e) {
+    e.preventDefault();
+    if (userName.trim()) {
+      setJoined(true);
+    }
+  }
+
+  // Loading state
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950">
@@ -95,6 +174,7 @@ export default function RoomPage() {
     );
   }
 
+  // Error state
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950">
@@ -104,6 +184,45 @@ export default function RoomPage() {
           <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
             Back to Dashboard
           </a>
+        </div>
+      </div>
+    );
+  }
+
+  // Join form for candidates (not logged in)
+  if (!joined) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-950 px-4">
+        <div className="w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="text-4xl font-bold text-white mb-2">CodRoom</h1>
+            <p className="text-gray-400">Join the interview</p>
+          </div>
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
+            <h2 className="text-xl font-semibold text-white mb-2">
+              {room.title}
+            </h2>
+            <p className="text-gray-400 text-sm mb-6">
+              Enter your name to join the coding session
+            </p>
+            <form onSubmit={handleJoin}>
+              <input
+                type="text"
+                placeholder="Your name"
+                value={userName}
+                onChange={(e) => setUserName(e.target.value)}
+                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={!userName.trim()}
+                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-all"
+              >
+                Join Room
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     );
@@ -123,17 +242,25 @@ export default function RoomPage() {
           </a>
           <span className="text-gray-600">|</span>
           <span className="text-gray-300 text-sm">{room.title}</span>
-          {room.candidateName && (
-            <>
-              <span className="text-gray-600">•</span>
-              <span className="text-gray-400 text-sm">
-                {room.candidateName}
-              </span>
-            </>
-          )}
         </div>
 
-        {/* Right: Run Button */}
+        {/* Center: Users */}
+        <div className="flex items-center gap-2">
+          {users.map((user) => (
+            <span
+              key={user.id}
+              className={`px-3 py-1 text-xs rounded-full ${
+                user.role === "interviewer"
+                  ? "bg-purple-900/30 text-purple-400 border border-purple-800"
+                  : "bg-blue-900/30 text-blue-400 border border-blue-800"
+              }`}
+            >
+              {user.name} ({user.role})
+            </span>
+          ))}
+        </div>
+
+        {/* Right: Actions */}
         <div className="flex items-center gap-3">
           <button
             onClick={handleRunCode}
@@ -171,25 +298,28 @@ export default function RoomPage() {
               <>▶ Run Code</>
             )}
           </button>
-          <span className="px-3 py-1 text-xs font-medium rounded-full bg-green-900/30 text-green-400 border border-green-800">
-            ● Live
+          <span
+            className={`px-3 py-1 text-xs font-medium rounded-full ${
+              isConnected
+                ? "bg-green-900/30 text-green-400 border border-green-800"
+                : "bg-red-900/30 text-red-400 border border-red-800"
+            }`}
+          >
+            {isConnected ? "● Connected" : "● Disconnected"}
           </span>
         </div>
       </div>
 
-      {/* Main Content: Editor + Output */}
+      {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Editor - 65% height */}
         <div className="flex-1" style={{ minHeight: "60%" }}>
           <CodeEditor
             language={language}
-            onLanguageChange={setLanguage}
+            onLanguageChange={handleLanguageChange}
             code={code}
-            onCodeChange={setCode}
+            onCodeChange={handleCodeChange}
           />
         </div>
-
-        {/* Output Panel - 35% height */}
         <div style={{ height: "35%" }}>
           <OutputPanel output={output} isRunning={isRunning} />
         </div>
