@@ -4,6 +4,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
+import ChatPanel from "@/components/ui/ChatPanel";
+import NotesPanel from "@/components/ui/NotesPanel";
+import VideoPanel from "@/components/video/VideoPanel";
 import useSocket from "@/hooks/useSocket";
 
 export default function RoomPage() {
@@ -20,32 +23,28 @@ export default function RoomPage() {
   const [userName, setUserName] = useState("");
   const [role, setRole] = useState("candidate");
   const [joined, setJoined] = useState(false);
+  const [activePanel, setActivePanel] = useState("chat");
+  const [showVideo, setShowVideo] = useState(false);
 
-  // Socket connection
   const {
     isConnected,
     users,
+    messages,
     emitCodeChange,
     emitLanguageChange,
     emitCodeOutput,
+    sendMessage,
+    sharePeerId,
     onCodeUpdate,
     onLanguageUpdate,
     onOutputUpdate,
+    onPeerIdReceived,
   } = useSocket(joined ? roomId : null, userName, role);
 
-  // Register socket callbacks
   useEffect(() => {
-    onCodeUpdate((newCode) => {
-      setCode(newCode);
-    });
-
-    onLanguageUpdate((newLang) => {
-      setLanguage(newLang);
-    });
-
-    onOutputUpdate((newOutput) => {
-      setOutput(newOutput);
-    });
+    onCodeUpdate((newCode) => setCode(newCode));
+    onLanguageUpdate((newLang) => setLanguage(newLang));
+    onOutputUpdate((newOutput) => setOutput(newOutput));
   }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate]);
 
   useEffect(() => {
@@ -64,11 +63,8 @@ export default function RoomPage() {
 
       setRoom(data.room);
       setLanguage(data.room.language || "javascript");
-      setCode(
-        LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || ""
-      );
+      setCode(LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || "");
 
-      // Check if current user is the interviewer
       try {
         const meRes = await fetch("/api/auth/me");
         if (meRes.ok) {
@@ -80,7 +76,7 @@ export default function RoomPage() {
           }
         }
       } catch {
-        // Not logged in — will show join form
+        // Not logged in
       }
     } catch {
       setError("Failed to load room");
@@ -89,7 +85,6 @@ export default function RoomPage() {
     }
   }
 
-  // Handle code changes (local + emit)
   const handleCodeChange = useCallback(
     (newCode) => {
       setCode(newCode);
@@ -98,7 +93,6 @@ export default function RoomPage() {
     [emitCodeChange]
   );
 
-  // Handle language changes (local + emit)
   const handleLanguageChange = useCallback(
     (newLang) => {
       setLanguage(newLang);
@@ -111,11 +105,7 @@ export default function RoomPage() {
   async function handleRunCode() {
     if (isRunning) return;
     if (!code.trim()) {
-      setOutput({
-        status: "error",
-        output: "No code to run",
-        type: "Error",
-      });
+      setOutput({ status: "error", output: "No code to run", type: "Error" });
       return;
     }
 
@@ -132,11 +122,7 @@ export default function RoomPage() {
       const data = await res.json();
 
       if (!res.ok) {
-        const errOutput = {
-          status: "error",
-          output: data.error || "Execution failed",
-          type: "Error",
-        };
+        const errOutput = { status: "error", output: data.error || "Execution failed", type: "Error" };
         setOutput(errOutput);
         emitCodeOutput(errOutput);
         return;
@@ -145,11 +131,7 @@ export default function RoomPage() {
       setOutput(data);
       emitCodeOutput(data);
     } catch {
-      const errOutput = {
-        status: "error",
-        output: "Failed to connect to execution server",
-        type: "Error",
-      };
+      const errOutput = { status: "error", output: "Failed to connect", type: "Error" };
       setOutput(errOutput);
       emitCodeOutput(errOutput);
     } finally {
@@ -157,15 +139,11 @@ export default function RoomPage() {
     }
   }
 
-  // Handle candidate join
   function handleJoin(e) {
     e.preventDefault();
-    if (userName.trim()) {
-      setJoined(true);
-    }
+    if (userName.trim()) setJoined(true);
   }
 
-  // Loading state
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950">
@@ -174,22 +152,18 @@ export default function RoomPage() {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950">
         <div className="text-center">
           <div className="text-6xl mb-4">😵</div>
           <h2 className="text-xl font-semibold text-white mb-2">{error}</h2>
-          <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
-            Back to Dashboard
-          </a>
+          <a href="/dashboard" className="text-blue-400 hover:text-blue-300">Back to Dashboard</a>
         </div>
       </div>
     );
   }
 
-  // Join form for candidates (not logged in)
   if (!joined) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950 px-4">
@@ -199,12 +173,8 @@ export default function RoomPage() {
             <p className="text-gray-400">Join the interview</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-            <h2 className="text-xl font-semibold text-white mb-2">
-              {room.title}
-            </h2>
-            <p className="text-gray-400 text-sm mb-6">
-              Enter your name to join the coding session
-            </p>
+            <h2 className="text-xl font-semibold text-white mb-2">{room.title}</h2>
+            <p className="text-gray-400 text-sm mb-6">Enter your name to join the coding session</p>
             <form onSubmit={handleJoin}>
               <input
                 type="text"
@@ -232,19 +202,14 @@ export default function RoomPage() {
     <div className="h-screen flex flex-col bg-gray-950">
       {/* Room Header */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
-        {/* Left: Room Info */}
         <div className="flex items-center gap-4">
-          <a
-            href="/dashboard"
-            className="text-lg font-bold text-white hover:text-blue-400 transition-all"
-          >
+          <a href="/dashboard" className="text-lg font-bold text-white hover:text-blue-400 transition-all">
             CodRoom
           </a>
           <span className="text-gray-600">|</span>
           <span className="text-gray-300 text-sm">{room.title}</span>
         </div>
 
-        {/* Center: Users */}
         <div className="flex items-center gap-2">
           {users.map((user) => (
             <span
@@ -255,49 +220,62 @@ export default function RoomPage() {
                   : "bg-blue-900/30 text-blue-400 border border-blue-800"
               }`}
             >
-              {user.name} ({user.role})
+              {user.name}
             </span>
           ))}
         </div>
 
-        {/* Right: Actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* Video Toggle */}
+          <button
+            onClick={() => setShowVideo(!showVideo)}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+              showVideo
+                ? "bg-green-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            }`}
+          >
+            🎥 Video
+          </button>
+
+          {/* Chat Toggle */}
+          <button
+            onClick={() => setActivePanel(activePanel === "chat" ? null : "chat")}
+            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+              activePanel === "chat"
+                ? "bg-blue-600 text-white"
+                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            }`}
+          >
+            💬 Chat
+          </button>
+
+          {/* Notes Toggle (interviewer only) */}
+          {role === "interviewer" && (
+            <button
+              onClick={() => setActivePanel(activePanel === "notes" ? null : "notes")}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                activePanel === "notes"
+                  ? "bg-purple-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+              }`}
+            >
+              📝 Notes
+            </button>
+          )}
+
           <button
             onClick={handleRunCode}
             disabled={isRunning}
-            className={`px-5 py-2 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${
+            className={`px-5 py-1.5 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${
               isRunning
                 ? "bg-gray-700 text-gray-400 cursor-not-allowed"
                 : "bg-green-600 hover:bg-green-700 text-white"
             }`}
           >
-            {isRunning ? (
-              <>
-                <svg
-                  className="animate-spin h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                >
-                  <circle
-                    className="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    strokeWidth="4"
-                  />
-                  <path
-                    className="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  />
-                </svg>
-                Running...
-              </>
-            ) : (
-              <>▶ Run Code</>
-            )}
+            {isRunning ? "Running..." : "▶ Run Code"}
           </button>
+
           <span
             className={`px-3 py-1 text-xs font-medium rounded-full ${
               isConnected
@@ -311,18 +289,54 @@ export default function RoomPage() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        <div className="flex-1" style={{ minHeight: "60%" }}>
-          <CodeEditor
-            language={language}
-            onLanguageChange={handleLanguageChange}
-            code={code}
-            onCodeChange={handleCodeChange}
-          />
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left: Editor + Output */}
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1" style={{ minHeight: "60%" }}>
+            <CodeEditor
+              language={language}
+              onLanguageChange={handleLanguageChange}
+              code={code}
+              onCodeChange={handleCodeChange}
+            />
+          </div>
+          <div style={{ height: "35%" }}>
+            <OutputPanel output={output} isRunning={isRunning} />
+          </div>
         </div>
-        <div style={{ height: "35%" }}>
-          <OutputPanel output={output} isRunning={isRunning} />
-        </div>
+
+        {/* Right: Side Panel */}
+        {(activePanel || showVideo) && (
+          <div className="w-80 flex flex-col border-l border-gray-800">
+            {/* Video at top of side panel */}
+            {showVideo && (
+              <div className="p-3 border-b border-gray-800">
+                <VideoPanel
+                  roomId={roomId}
+                  userName={userName}
+                  sharePeerId={sharePeerId}
+                  onPeerIdReceived={onPeerIdReceived}
+                />
+              </div>
+            )}
+
+            {/* Chat or Notes below video */}
+            {activePanel && (
+              <div className="flex-1 overflow-hidden">
+                {activePanel === "chat" && (
+                  <ChatPanel
+                    messages={messages}
+                    onSendMessage={sendMessage}
+                    userName={userName}
+                  />
+                )}
+                {activePanel === "notes" && (
+                  <NotesPanel roomId={roomId} />
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

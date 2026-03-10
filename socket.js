@@ -9,7 +9,6 @@ const io = new Server(httpServer, {
   },
 });
 
-// Store room data in memory
 const rooms = new Map();
 
 io.on("connection", (socket) => {
@@ -19,38 +18,64 @@ io.on("connection", (socket) => {
   socket.on("join-room", ({ roomId, userName, role }) => {
     socket.join(roomId);
 
-    // Initialize room if not exists
     if (!rooms.has(roomId)) {
       rooms.set(roomId, {
         code: "",
         language: "javascript",
         users: [],
+        messages: [],
       });
     }
 
     const room = rooms.get(roomId);
 
-    // Add user to room
     const user = {
       id: socket.id,
       name: userName,
-      role: role, // "interviewer" or "candidate"
+      role: role,
+      peerId: null,
     };
     room.users.push(user);
 
     console.log(`👤 ${userName} (${role}) joined room: ${roomId}`);
 
-    // Send current room state to the new user
     socket.emit("room-state", {
       code: room.code,
       language: room.language,
       users: room.users,
+      messages: room.messages,
     });
 
-    // Notify others that someone joined
     socket.to(roomId).emit("user-joined", {
       user,
       users: room.users,
+    });
+
+    const joinMsg = {
+      id: Date.now().toString(),
+      sender: "System",
+      role: "system",
+      text: `${userName} joined the room`,
+      timestamp: new Date().toISOString(),
+    };
+    room.messages.push(joinMsg);
+    io.to(roomId).emit("chat-message", joinMsg);
+  });
+
+  // User shares their Peer ID for video call
+  socket.on("share-peer-id", ({ roomId, peerId }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      const user = room.users.find((u) => u.id === socket.id);
+      if (user) {
+        user.peerId = peerId;
+      }
+    }
+
+    // Tell everyone else in the room about this peer
+    socket.to(roomId).emit("peer-id-received", {
+      peerId,
+      socketId: socket.id,
     });
   });
 
@@ -60,8 +85,6 @@ io.on("connection", (socket) => {
     if (room) {
       room.code = code;
     }
-
-    // Send to everyone EXCEPT the sender
     socket.to(roomId).emit("code-update", { code });
   });
 
@@ -71,20 +94,37 @@ io.on("connection", (socket) => {
     if (room) {
       room.language = language;
     }
-
     socket.to(roomId).emit("language-update", { language });
   });
 
-  // Code execution result (share output with both users)
+  // Code execution result
   socket.on("code-output", ({ roomId, output }) => {
     socket.to(roomId).emit("output-update", { output });
+  });
+
+  // Chat message
+  socket.on("send-message", ({ roomId, text, sender, role }) => {
+    const room = rooms.get(roomId);
+    if (!room) return;
+
+    const message = {
+      id: Date.now().toString() + socket.id,
+      sender,
+      role,
+      text,
+      timestamp: new Date().toISOString(),
+    };
+
+    room.messages.push(message);
+
+    // Send to ALL users in room (including sender)
+    io.to(roomId).emit("chat-message", message);
   });
 
   // User disconnects
   socket.on("disconnect", () => {
     console.log(`❌ User disconnected: ${socket.id}`);
 
-    // Remove user from all rooms
     rooms.forEach((room, roomId) => {
       const index = room.users.findIndex((u) => u.id === socket.id);
       if (index !== -1) {
@@ -97,9 +137,19 @@ io.on("connection", (socket) => {
           users: room.users,
         });
 
+        // System message
+        const leaveMsg = {
+          id: Date.now().toString(),
+          sender: "System",
+          role: "system",
+          text: `${user.name} left the room`,
+          timestamp: new Date().toISOString(),
+        };
+        room.messages.push(leaveMsg);
+        io.to(roomId).emit("chat-message", leaveMsg);
+
         console.log(`👤 ${user.name} left room: ${roomId}`);
 
-        // Clean up empty rooms
         if (room.users.length === 0) {
           rooms.delete(roomId);
           console.log(`🗑️ Room ${roomId} deleted (empty)`);
