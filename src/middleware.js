@@ -5,7 +5,7 @@ const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 const COOKIE_NAME = "codroom-token";
 
 // Routes that require login
-const protectedRoutes = ["/dashboard"];
+const protectedRoutes = ["/dashboard", "/problems"];
 
 // Routes that logged-in users should NOT see
 const authRoutes = ["/login", "/register"];
@@ -43,5 +43,5 @@ export async function middleware(request) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/register"],
+  matcher: ["/dashboard/:path*", "/problems/:path*", "/login", "/register"],
 };

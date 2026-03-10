@@ -3,12 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
     "socket": "node server/socket.js",
-    "dev:all": "npm run socket & npm run dev"
+    "seed": "node prisma/seed.js"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
