@@ -2,32 +2,53 @@
 
 import { useEffect, useRef, useState } from "react";
 
-export default function VideoPanel({
-  roomId,
-  userName,
-  sharePeerId,
-  onPeerIdReceived,
-}) {
-  const [myStream, setMyStream] = useState(null);
+export default function VideoPanel({ isActive, sharePeerId, onPeerIdReceived }) {
   const [remoteStream, setRemoteStream] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
-  const [callStatus, setCallStatus] = useState("initializing");
+  const [callStatus, setCallStatus] = useState("idle");
 
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
   const peerRef = useRef(null);
   const currentCallRef = useRef(null);
+  const myStreamRef = useRef(null);
 
+  // ── Watch isActive — start/stop camera based on it ──
   useEffect(() => {
-    initializeVideo();
+    if (isActive) {
+      initializeVideo();
+    } else {
+      stopEverything();
+    }
+  }, [isActive]);
 
+  // ── Stop camera on page close/tab close ──
+  useEffect(() => {
+    window.addEventListener("beforeunload", stopEverything);
     return () => {
-      cleanup();
+      stopEverything();
+      window.removeEventListener("beforeunload", stopEverything);
     };
   }, []);
 
-  // Listen for incoming peer IDs
+  // ── Attach remote stream ──
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+      remoteVideoRef.current.play().catch(() => {});
+    }
+  }, [remoteStream]);
+
+  // ── Re-attach local stream when camera turned back on ──
+  useEffect(() => {
+    if (!isCameraOff && myVideoRef.current && myStreamRef.current) {
+      myVideoRef.current.srcObject = myStreamRef.current;
+      myVideoRef.current.play().catch(() => {});
+    }
+  }, [isCameraOff]);
+
+  // ── Listen for other user's peer ID ──
   useEffect(() => {
     onPeerIdReceived((peerId) => {
       console.log("📞 Received peer ID, calling:", peerId);
@@ -35,55 +56,82 @@ export default function VideoPanel({
     });
   }, [onPeerIdReceived]);
 
+  function stopEverything() {
+    console.log("🛑 Stopping all camera/mic tracks");
+
+    // Stop all media tracks — this turns off camera light
+    if (myStreamRef.current) {
+      myStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+        console.log("🛑 Stopped track:", track.kind);
+      });
+      myStreamRef.current = null;
+    }
+
+    // Clear video elements
+    if (myVideoRef.current) {
+      myVideoRef.current.srcObject = null;
+    }
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    // Close call
+    if (currentCallRef.current) {
+      currentCallRef.current.close();
+      currentCallRef.current = null;
+    }
+
+    // Destroy peer
+    if (peerRef.current) {
+      peerRef.current.destroy();
+      peerRef.current = null;
+    }
+
+    setRemoteStream(null);
+    setIsMuted(false);
+    setIsCameraOff(false);
+    setCallStatus("idle");
+  }
+
   async function initializeVideo() {
     try {
-      // Check if getUserMedia is available
+      setCallStatus("initializing");
+
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        console.warn("Camera/microphone not available");
         setCallStatus("no-camera");
         return;
       }
 
-      // Get camera and microphone
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
-      setMyStream(stream);
+      myStreamRef.current = stream;
 
-      // Show local video
       if (myVideoRef.current) {
         myVideoRef.current.srcObject = stream;
       }
 
-      // Dynamically import PeerJS (client-side only)
       const { default: Peer } = await import("peerjs");
-
-      // Create peer
       const peer = new Peer();
       peerRef.current = peer;
 
       peer.on("open", (id) => {
         console.log("🎥 My Peer ID:", id);
         setCallStatus("ready");
-
-        // Share peer ID with room via socket
         sharePeerId(id);
       });
 
-      // Answer incoming calls
       peer.on("call", (call) => {
         console.log("📞 Incoming call, answering...");
         call.answer(stream);
         currentCallRef.current = call;
 
         call.on("stream", (incomingStream) => {
-          console.log("🎥 Receiving remote stream");
+          console.log("🎥 Got remote stream");
           setRemoteStream(incomingStream);
-          if (remoteVideoRef.current) {
-            remoteVideoRef.current.srcObject = incomingStream;
-          }
           setCallStatus("connected");
         });
 
@@ -91,31 +139,36 @@ export default function VideoPanel({
           setRemoteStream(null);
           setCallStatus("ready");
         });
+
+        call.on("error", (err) => {
+          console.error("Call error:", err);
+          setCallStatus("error");
+        });
       });
 
       peer.on("error", (err) => {
         console.error("Peer error:", err);
         setCallStatus("error");
       });
+
     } catch (err) {
-      console.error("Failed to get media devices:", err);
+      console.error("Camera access failed:", err);
       setCallStatus("no-camera");
     }
   }
 
   function callPeer(remotePeerId) {
-    if (!peerRef.current || !myStream) return;
+    const stream = myStreamRef.current;
+    if (!peerRef.current || !stream) {
+      console.warn("Cannot call — peer or stream not ready");
+      return;
+    }
 
-    console.log("📞 Calling peer:", remotePeerId);
-    const call = peerRef.current.call(remotePeerId, myStream);
+    const call = peerRef.current.call(remotePeerId, stream);
     currentCallRef.current = call;
 
     call.on("stream", (incomingStream) => {
-      console.log("🎥 Receiving remote stream from call");
       setRemoteStream(incomingStream);
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = incomingStream;
-      }
       setCallStatus("connected");
     });
 
@@ -123,73 +176,68 @@ export default function VideoPanel({
       setRemoteStream(null);
       setCallStatus("ready");
     });
+
+    call.on("error", (err) => {
+      console.error("Call error:", err);
+    });
   }
 
   function toggleMute() {
-    if (myStream) {
-      const audioTrack = myStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMuted(!audioTrack.enabled);
-      }
+    const stream = myStreamRef.current;
+    if (!stream) return;
+    const audioTrack = stream.getAudioTracks()[0];
+    if (audioTrack) {
+      audioTrack.enabled = !audioTrack.enabled;
+      setIsMuted(!audioTrack.enabled);
     }
   }
 
   function toggleCamera() {
-    if (myStream) {
-      const videoTrack = myStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsCameraOff(!videoTrack.enabled);
-      }
+    const stream = myStreamRef.current;
+    if (!stream) return;
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      videoTrack.enabled = !videoTrack.enabled;
+      setIsCameraOff(!videoTrack.enabled);
     }
   }
 
-  function cleanup() {
-    if (myStream) {
-      myStream.getTracks().forEach((track) => track.stop());
-    }
-    if (currentCallRef.current) {
-      currentCallRef.current.close();
-    }
-    if (peerRef.current) {
-      peerRef.current.destroy();
-    }
-  }
+  // Don't render UI when not active
+  if (!isActive) return null;
 
   return (
     <div className="flex flex-col gap-2">
-      {/* Remote Video (big) */}
+      {/* Remote Video */}
       <div className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video">
-        {remoteStream ? (
-          <video
-            ref={remoteVideoRef}
-            autoPlay
-            playsInline
-            className="w-full h-full object-cover"
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={`w-full h-full object-cover ${!remoteStream ? "hidden" : ""}`}
+        />
+
+        {!remoteStream && (
+          <div className="absolute inset-0 flex items-center justify-center">
             <div className="text-center">
               <div className="text-3xl mb-2">👤</div>
               <p className="text-gray-500 text-xs">
                 {callStatus === "initializing" && "Starting camera..."}
                 {callStatus === "ready" && "Waiting for other user..."}
-                {callStatus === "connected" && "Connected"}
+                {callStatus === "connected" && "Connecting stream..."}
                 {callStatus === "error" && "Connection failed"}
                 {callStatus === "no-camera" && "No camera access"}
+                {callStatus === "idle" && "Video off"}
               </p>
             </div>
           </div>
         )}
 
-        {/* My Video (small overlay) */}
-        <div className="absolute bottom-2 right-2 w-24 h-18 bg-gray-900 rounded-lg overflow-hidden border border-gray-700">
-          {isCameraOff ? (
-            <div className="w-full h-full flex items-center justify-center bg-gray-800">
-              <span className="text-gray-500 text-xs">Camera Off</span>
-            </div>
-          ) : (
+        {/* My Video corner */}
+        {!isCameraOff ? (
+          <div
+            className="absolute bottom-2 right-2 w-24 rounded-lg overflow-hidden border border-gray-700 bg-gray-900"
+            style={{ height: "72px" }}
+          >
             <video
               ref={myVideoRef}
               autoPlay
@@ -197,8 +245,12 @@ export default function VideoPanel({
               muted
               className="w-full h-full object-cover"
             />
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="absolute bottom-2 right-2 px-2 py-1 bg-gray-900/80 rounded-lg border border-gray-700">
+            <span className="text-gray-500 text-xs">📷 Off</span>
+          </div>
+        )}
       </div>
 
       {/* Controls */}
@@ -222,7 +274,7 @@ export default function VideoPanel({
               : "bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700"
           }`}
         >
-          {isCameraOff ? "📷 Show" : "🎥 Hide"}
+          {isCameraOff ? "📷 Show Camera" : "🎥 Hide Camera"}
         </button>
       </div>
     </div>

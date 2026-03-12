@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useParams } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
+import ProblemPanel from "@/components/editor/ProblemPanel";
 import ChatPanel from "@/components/ui/ChatPanel";
 import NotesPanel from "@/components/ui/NotesPanel";
 import VideoPanel from "@/components/video/VideoPanel";
@@ -25,6 +26,7 @@ export default function RoomPage() {
   const [joined, setJoined] = useState(false);
   const [activePanel, setActivePanel] = useState("chat");
   const [showVideo, setShowVideo] = useState(false);
+  const [showProblem, setShowProblem] = useState(true);
 
   const {
     isConnected,
@@ -63,7 +65,16 @@ export default function RoomPage() {
 
       setRoom(data.room);
       setLanguage(data.room.language || "javascript");
-      setCode(LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || "");
+
+      // If room has a problem with starter code, use that
+      if (data.room.problem?.starterCode) {
+        setCode(data.room.problem.starterCode);
+      } else {
+        setCode(LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || "");
+      }
+
+      // Show problem panel if problem exists
+      setShowProblem(!!data.room.problem);
 
       try {
         const meRes = await fetch("/api/auth/me");
@@ -96,10 +107,13 @@ export default function RoomPage() {
   const handleLanguageChange = useCallback(
     (newLang) => {
       setLanguage(newLang);
-      setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
+      // If problem has starter code, keep it. Otherwise use default
+      if (!room?.problem?.starterCode) {
+        setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
+      }
       emitLanguageChange(newLang);
     },
-    [emitLanguageChange]
+    [emitLanguageChange, room]
   );
 
   async function handleRunCode() {
@@ -174,6 +188,11 @@ export default function RoomPage() {
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
             <h2 className="text-xl font-semibold text-white mb-2">{room.title}</h2>
+            {room.problem && (
+              <p className="text-blue-400 text-sm mb-2">
+                Problem: {room.problem.title}
+              </p>
+            )}
             <p className="text-gray-400 text-sm mb-6">Enter your name to join the coding session</p>
             <form onSubmit={handleJoin}>
               <input
@@ -208,6 +227,12 @@ export default function RoomPage() {
           </a>
           <span className="text-gray-600">|</span>
           <span className="text-gray-300 text-sm">{room.title}</span>
+          {room.problem && (
+            <>
+              <span className="text-gray-600">•</span>
+              <span className="text-blue-400 text-sm">{room.problem.title}</span>
+            </>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -226,7 +251,20 @@ export default function RoomPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Video Toggle */}
+          {/* Problem Toggle */}
+          {room.problem && (
+            <button
+              onClick={() => setShowProblem(!showProblem)}
+              className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
+                showProblem
+                  ? "bg-orange-600 text-white"
+                  : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+              }`}
+            >
+              📋 Problem
+            </button>
+          )}
+
           <button
             onClick={() => setShowVideo(!showVideo)}
             className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
@@ -238,7 +276,6 @@ export default function RoomPage() {
             🎥 Video
           </button>
 
-          {/* Chat Toggle */}
           <button
             onClick={() => setActivePanel(activePanel === "chat" ? null : "chat")}
             className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
@@ -250,7 +287,6 @@ export default function RoomPage() {
             💬 Chat
           </button>
 
-          {/* Notes Toggle (interviewer only) */}
           {role === "interviewer" && (
             <button
               onClick={() => setActivePanel(activePanel === "notes" ? null : "notes")}
@@ -290,7 +326,14 @@ export default function RoomPage() {
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left: Editor + Output */}
+        {/* Left: Problem Panel */}
+        {showProblem && room.problem && (
+          <div className="w-96">
+            <ProblemPanel problem={room.problem} />
+          </div>
+        )}
+
+        {/* Center: Editor + Output */}
         <div className="flex-1 flex flex-col">
           <div className="flex-1" style={{ minHeight: "60%" }}>
             <CodeEditor
@@ -308,27 +351,17 @@ export default function RoomPage() {
         {/* Right: Side Panel */}
         {(activePanel || showVideo) && (
           <div className="w-80 flex flex-col border-l border-gray-800">
-            {/* Video at top of side panel */}
-            {showVideo && (
-              <div className="p-3 border-b border-gray-800">
-                <VideoPanel
-                  roomId={roomId}
-                  userName={userName}
-                  sharePeerId={sharePeerId}
-                  onPeerIdReceived={onPeerIdReceived}
-                />
-              </div>
-            )}
-
-            {/* Chat or Notes below video */}
+            <div className={`p-3 border-b border-gray-800 ${!showVideo ? "hidden" : ""}`}>
+              <VideoPanel
+                isActive={showVideo}
+                sharePeerId={sharePeerId}
+                onPeerIdReceived={onPeerIdReceived}
+              />
+            </div>
             {activePanel && (
               <div className="flex-1 overflow-hidden">
                 {activePanel === "chat" && (
-                  <ChatPanel
-                    messages={messages}
-                    onSendMessage={sendMessage}
-                    userName={userName}
-                  />
+                  <ChatPanel messages={messages} onSendMessage={sendMessage} userName={userName} />
                 )}
                 {activePanel === "notes" && (
                   <NotesPanel roomId={roomId} />

@@ -15,7 +15,7 @@ export async function POST(request) {
     }
 
     const body = await request.json();
-    const { title, candidateName, language } = body;
+    const { title, candidateName, language, problemId } = body;
 
     if (!title) {
       return NextResponse.json(
@@ -30,6 +30,10 @@ export async function POST(request) {
         candidateName: candidateName || null,
         language: language || "javascript",
         createdById: user.userId,
+        problemId: problemId || null,
+      },
+      include: {
+        problem: true,
       },
     });
 
@@ -62,6 +66,7 @@ export async function GET() {
       where: { createdById: user.userId },
       orderBy: { createdAt: "desc" },
       include: {
+        problem: true,
         interview: {
           include: {
             report: true,
