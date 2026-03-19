@@ -5,7 +5,7 @@ export default function RoomCard({ room }) {
 
   return (
     <div
-      onClick={() => router.push(`/room/${room.id}`)}
+      onClick={() => router.push(room.status === "completed" ? `/room/${room.id}/report` : `/room/${room.id}`)}
       className="bg-gray-900 border border-gray-800 rounded-lg p-6 hover:border-blue-600 cursor-pointer transition-all"
     >
       <h3 className="text-xl font-semibold text-white mb-2">{room.name}</h3>

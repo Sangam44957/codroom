@@ -106,8 +106,8 @@ model AIReport {
   edgeCaseHandling Int
   overallScore     Int
   recommendation   String
-  summary          String
-  improvements     String
+  summary          String    @db.Text
+  improvements     String    @db.Text
   createdAt        DateTime @default(now())
 
   interviewId String    @unique

@@ -155,7 +155,7 @@ export default function RoomPage() {
       const data = await res.json();
       if (res.ok) {
         setInterviewStatus("completed");
-        router.push(`/room/${roomId}/playback`);
+        router.push(`/room/${roomId}/report`);
       } else {
         alert(data.error || "Failed to end interview");
       }
