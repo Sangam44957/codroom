@@ -1,25 +1,26 @@
+// NOTE: Requires Node.js 18+ for built-in fetch support.
+// If on Node 16 or below, run: npm install node-fetch
+// and add: const fetch = require("node-fetch"); at the top.
+
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 
 const httpServer = createServer();
 const io = new Server(httpServer, {
   cors: {
-    // FOR LOCAL NETWORK ACCESS (other devices on same WiFi):
-    origin: ["http://10.170.232.122:3000", "http://localhost:3000"],
-    
-    // FOR PRODUCTION (after deployment):
-    // origin: process.env.FRONTEND_URL || "http://localhost:3000",
-    
+    origin: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     methods: ["GET", "POST"],
   },
 });
 
 const rooms = new Map();
 
+// Debounce timers for snapshots
+const snapshotTimers = new Map();
+
 io.on("connection", (socket) => {
   console.log(`✅ User connected: ${socket.id}`);
 
-  // User joins a room
   socket.on("join-room", ({ roomId, userName, role }) => {
     socket.join(roomId);
 
@@ -29,18 +30,27 @@ io.on("connection", (socket) => {
         language: "javascript",
         users: [],
         messages: [],
+        interviewId: null,
       });
     }
 
     const room = rooms.get(roomId);
 
-    const user = {
-      id: socket.id,
-      name: userName,
-      role: role,
-      peerId: null,
-    };
-    room.users.push(user);
+    // Prevent duplicate users (e.g. reconnects)
+    const existingUser = room.users.find((u) => u.name === userName && u.role === role);
+    if (existingUser) {
+      existingUser.id = socket.id;
+    } else {
+      const user = {
+        id: socket.id,
+        name: userName,
+        role: role,
+        peerId: null,
+      };
+      room.users.push(user);
+    }
+
+    const currentUser = room.users.find((u) => u.id === socket.id);
 
     console.log(`👤 ${userName} (${role}) joined room: ${roomId}`);
 
@@ -49,10 +59,11 @@ io.on("connection", (socket) => {
       language: room.language,
       users: room.users,
       messages: room.messages,
+      interviewId: room.interviewId,
     });
 
     socket.to(roomId).emit("user-joined", {
-      user,
+      user: currentUser,
       users: room.users,
     });
 
@@ -67,43 +78,62 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("chat-message", joinMsg);
   });
 
-  // User shares their Peer ID for video call
+  // Store interview ID for snapshot recording
+  // Also broadcast to all room members so candidates know interview started
+  socket.on("set-interview-id", ({ roomId, interviewId }) => {
+    const room = rooms.get(roomId);
+    if (room) {
+      room.interviewId = interviewId;
+      console.log(`📝 Interview ${interviewId} started in room ${roomId}`);
+      // Broadcast to everyone in the room (including the interviewer)
+      io.to(roomId).emit("interview-started", { interviewId });
+    }
+  });
+
   socket.on("share-peer-id", ({ roomId, peerId }) => {
     const room = rooms.get(roomId);
     if (room) {
       const user = room.users.find((u) => u.id === socket.id);
-      if (user) {
-        user.peerId = peerId;
-      }
+      if (user) user.peerId = peerId;
     }
-
-    // Tell everyone else in the room about this peer
-    socket.to(roomId).emit("peer-id-received", {
-      peerId,
-      socketId: socket.id,
-    });
+    socket.to(roomId).emit("peer-id-received", { peerId, socketId: socket.id });
   });
 
-  // Code changed
   socket.on("code-change", ({ roomId, code }) => {
     const room = rooms.get(roomId);
-    if (room) room.code = code;
+    if (room) {
+      room.code = code;
+
+      // Debounced snapshot saving (saves 3 seconds after last keystroke)
+      if (room.interviewId) {
+        const timerKey = `${roomId}-snapshot`;
+
+        if (snapshotTimers.has(timerKey)) {
+          clearTimeout(snapshotTimers.get(timerKey));
+        }
+
+        snapshotTimers.set(
+          timerKey,
+          setTimeout(() => {
+            saveSnapshot(room.interviewId, code);
+            snapshotTimers.delete(timerKey);
+          }, 3000)
+        );
+      }
+    }
     socket.to(roomId).emit("code-update", { code });
   });
 
-  // Language changed
   socket.on("language-change", ({ roomId, language }) => {
     const room = rooms.get(roomId);
     if (room) room.language = language;
     socket.to(roomId).emit("language-update", { language });
   });
 
-  // Code execution result
   socket.on("code-output", ({ roomId, output }) => {
     socket.to(roomId).emit("output-update", { output });
   });
 
-  // Chat message
   socket.on("send-message", ({ roomId, text, sender, role }) => {
     const room = rooms.get(roomId);
     if (!room) return;
@@ -120,7 +150,6 @@ io.on("connection", (socket) => {
     io.to(roomId).emit("chat-message", message);
   });
 
-  // User disconnects
   socket.on("disconnect", () => {
     console.log(`❌ User disconnected: ${socket.id}`);
 
@@ -130,10 +159,7 @@ io.on("connection", (socket) => {
         const user = room.users[index];
         room.users.splice(index, 1);
 
-        io.to(roomId).emit("user-left", {
-          user,
-          users: room.users,
-        });
+        io.to(roomId).emit("user-left", { user, users: room.users });
 
         const leaveMsg = {
           id: Date.now().toString(),
@@ -148,6 +174,12 @@ io.on("connection", (socket) => {
         console.log(`👤 ${user.name} left room: ${roomId}`);
 
         if (room.users.length === 0) {
+          // Clear any pending snapshot timers before deleting
+          const timerKey = `${roomId}-snapshot`;
+          if (snapshotTimers.has(timerKey)) {
+            clearTimeout(snapshotTimers.get(timerKey));
+            snapshotTimers.delete(timerKey);
+          }
           rooms.delete(roomId);
           console.log(`🗑️ Room ${roomId} deleted (empty)`);
         }
@@ -156,9 +188,31 @@ io.on("connection", (socket) => {
   });
 });
 
-const PORT = 3001;
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`\n🚀 Socket.io server running on:\n`);
-  console.log(`   Local:   http://localhost:${PORT}`);
-  console.log(`   Network: http://10.170.232.122:${PORT}\n`);
+// Save snapshot to database via the Next.js API
+async function saveSnapshot(interviewId, code) {
+  try {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const res = await fetch(
+      `${appUrl}/api/interviews/${interviewId}/snapshots`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      }
+    );
+
+    if (res.ok) {
+      console.log(`📸 Snapshot saved for interview ${interviewId}`);
+    } else {
+      const data = await res.json().catch(() => ({}));
+      console.error(`Failed to save snapshot: ${data.error || res.status}`);
+    }
+  } catch (error) {
+    console.error("Snapshot fetch error:", error.message);
+  }
+}
+
+const PORT = process.env.SOCKET_PORT || 3001;
+httpServer.listen(PORT, () => {
+  console.log(`\n🚀 Socket.io server running on http://localhost:${PORT}\n`);
 });

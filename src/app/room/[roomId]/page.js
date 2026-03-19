@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { useParams } from "next/navigation";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
 import ProblemPanel from "@/components/editor/ProblemPanel";
@@ -12,6 +12,7 @@ import useSocket from "@/hooks/useSocket";
 
 export default function RoomPage() {
   const params = useParams();
+  const router = useRouter();
   const roomId = params.roomId;
 
   const [room, setRoom] = useState(null);
@@ -21,12 +22,20 @@ export default function RoomPage() {
   const [code, setCode] = useState(LANGUAGE_CONFIG["javascript"].defaultCode);
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [userName, setUserName] = useState("");
-  const [role, setRole] = useState("candidate");
-  const [joined, setJoined] = useState(false);
-  const [activePanel, setActivePanel] = useState("chat");
-  const [showVideo, setShowVideo] = useState(false);
   const [showProblem, setShowProblem] = useState(true);
+  const [showOutput, setShowOutput] = useState(true);
+  const [rightTab, setRightTab] = useState("chat"); // "chat" | "notes" | "video"
+
+  const [session, setSession] = useState({
+    userName: "",
+    role: "candidate",
+    joined: false,
+  });
+
+  const [interviewId, setInterviewId] = useState(null);
+  const [interviewStatus, setInterviewStatus] = useState("waiting");
+  const [timer, setTimer] = useState(0);
+  const timerRef = useRef(null);
 
   const {
     isConnected,
@@ -37,11 +46,13 @@ export default function RoomPage() {
     emitCodeOutput,
     sendMessage,
     sharePeerId,
+    emitSetInterviewId,
     onCodeUpdate,
     onLanguageUpdate,
     onOutputUpdate,
     onPeerIdReceived,
-  } = useSocket(joined ? roomId : null, userName, role);
+    onInterviewStarted,
+  } = useSocket(session.joined ? roomId : null, session.userName, session.role);
 
   useEffect(() => {
     onCodeUpdate((newCode) => setCode(newCode));
@@ -50,45 +61,62 @@ export default function RoomPage() {
   }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate]);
 
   useEffect(() => {
+    onInterviewStarted((id) => {
+      setInterviewId(id);
+      setInterviewStatus("in_progress");
+    });
+  }, [onInterviewStarted]);
+
+  useEffect(() => {
+    if (interviewStatus === "in_progress") {
+      timerRef.current = setInterval(() => setTimer((p) => p + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    return () => clearInterval(timerRef.current);
+  }, [interviewStatus]);
+
+  useEffect(() => {
     fetchRoom();
   }, []);
+
+  function formatTimer(s) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
 
   async function fetchRoom() {
     try {
       const res = await fetch(`/api/rooms/${roomId}`);
       const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Room not found");
-        return;
-      }
+      if (!res.ok) { setError(data.error || "Room not found"); return; }
 
       setRoom(data.room);
       setLanguage(data.room.language || "javascript");
-
-      // If room has a problem with starter code, use that
-      if (data.room.problem?.starterCode) {
-        setCode(data.room.problem.starterCode);
-      } else {
-        setCode(LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || "");
-      }
-
-      // Show problem panel if problem exists
+      setCode(
+        data.room.problem?.starterCode ||
+        LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || ""
+      );
       setShowProblem(!!data.room.problem);
+
+      if (data.room.interview) {
+        setInterviewId(data.room.interview.id);
+        setInterviewStatus(data.room.interview.status);
+      }
 
       try {
         const meRes = await fetch("/api/auth/me");
         if (meRes.ok) {
           const meData = await meRes.json();
           if (meData.user.userId === data.room.createdById) {
-            setRole("interviewer");
-            setUserName(meData.user.name);
-            setJoined(true);
+            setSession({ userName: meData.user.name, role: "interviewer", joined: true });
           }
         }
-      } catch {
-        // Not logged in
-      }
+      } catch {}
     } catch {
       setError("Failed to load room");
     } finally {
@@ -96,58 +124,82 @@ export default function RoomPage() {
     }
   }
 
+  async function handleStartInterview() {
+    try {
+      const res = await fetch("/api/interviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId, language }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInterviewId(data.interview.id);
+        setInterviewStatus("in_progress");
+        emitSetInterviewId(data.interview.id);
+      } else {
+        alert(data.error || "Failed to start interview");
+      }
+    } catch (err) {
+      console.error("Failed to start interview:", err);
+    }
+  }
+
+  async function handleEndInterview() {
+    if (!confirm("Are you sure you want to end this interview?")) return;
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/end`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ finalCode: code, language }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInterviewStatus("completed");
+        router.push(`/room/${roomId}/playback`);
+      } else {
+        alert(data.error || "Failed to end interview");
+      }
+    } catch (err) {
+      console.error("Failed to end interview:", err);
+    }
+  }
+
   const handleCodeChange = useCallback(
-    (newCode) => {
-      setCode(newCode);
-      emitCodeChange(newCode);
-    },
+    (newCode) => { setCode(newCode); emitCodeChange(newCode); },
     [emitCodeChange]
   );
 
   const handleLanguageChange = useCallback(
     (newLang) => {
       setLanguage(newLang);
-      // If problem has starter code, keep it. Otherwise use default
-      if (!room?.problem?.starterCode) {
-        setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
-      }
+      if (!room?.problem?.starterCode) setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
       emitLanguageChange(newLang);
     },
     [emitLanguageChange, room]
   );
 
   async function handleRunCode() {
-    if (isRunning) return;
-    if (!code.trim()) {
-      setOutput({ status: "error", output: "No code to run", type: "Error" });
+    if (isRunning || !code.trim()) {
+      if (!code.trim()) setOutput({ status: "error", output: "No code to run", type: "Error" });
       return;
     }
-
     setIsRunning(true);
     setOutput(null);
-
+    setShowOutput(true);
     try {
       const res = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, language }),
       });
-
       const data = await res.json();
-
-      if (!res.ok) {
-        const errOutput = { status: "error", output: data.error || "Execution failed", type: "Error" };
-        setOutput(errOutput);
-        emitCodeOutput(errOutput);
-        return;
-      }
-
-      setOutput(data);
-      emitCodeOutput(data);
+      const result = res.ok ? data : { status: "error", output: data.error || "Execution failed", type: "Error" };
+      setOutput(result);
+      emitCodeOutput(result);
     } catch {
-      const errOutput = { status: "error", output: "Failed to connect", type: "Error" };
-      setOutput(errOutput);
-      emitCodeOutput(errOutput);
+      const err = { status: "error", output: "Failed to connect to execution server", type: "Error" };
+      setOutput(err);
+      emitCodeOutput(err);
     } finally {
       setIsRunning(false);
     }
@@ -155,8 +207,11 @@ export default function RoomPage() {
 
   function handleJoin(e) {
     e.preventDefault();
-    if (userName.trim()) setJoined(true);
+    const name = e.target.elements.name.value.trim();
+    if (name) setSession({ userName: name, role: "candidate", joined: true });
   }
+
+  // ─── Loading / Error / Join screens ──────────────────────────
 
   if (loading) {
     return (
@@ -178,7 +233,7 @@ export default function RoomPage() {
     );
   }
 
-  if (!joined) {
+  if (!session.joined) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-950 px-4">
         <div className="w-full max-w-md">
@@ -187,26 +242,20 @@ export default function RoomPage() {
             <p className="text-gray-400">Join the interview</p>
           </div>
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-            <h2 className="text-xl font-semibold text-white mb-2">{room.title}</h2>
-            {room.problem && (
-              <p className="text-blue-400 text-sm mb-2">
-                Problem: {room.problem.title}
-              </p>
-            )}
-            <p className="text-gray-400 text-sm mb-6">Enter your name to join the coding session</p>
+            <h2 className="text-xl font-semibold text-white mb-1">{room.title}</h2>
+            {room.problem && <p className="text-blue-400 text-sm mb-2">Problem: {room.problem.title}</p>}
+            <p className="text-gray-400 text-sm mb-6">Enter your name to join</p>
             <form onSubmit={handleJoin}>
               <input
+                name="name"
                 type="text"
                 placeholder="Your name"
-                value={userName}
-                onChange={(e) => setUserName(e.target.value)}
                 className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
                 autoFocus
               />
               <button
                 type="submit"
-                disabled={!userName.trim()}
-                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white rounded-lg font-medium transition-all"
+                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all"
               >
                 Join Room
               </button>
@@ -217,125 +266,144 @@ export default function RoomPage() {
     );
   }
 
+  // ─── Main Room UI ─────────────────────────────────────────────
+
+  const isInterviewer = session.role === "interviewer";
+
   return (
-    <div className="h-screen flex flex-col bg-gray-950">
-      {/* Room Header */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
-        <div className="flex items-center gap-4">
-          <a href="/dashboard" className="text-lg font-bold text-white hover:text-blue-400 transition-all">
+    <div className="h-screen flex flex-col bg-gray-950 overflow-hidden">
+
+      {/* ── Top Header ── */}
+      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 flex-shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <a href="/dashboard" className="text-base font-bold text-white hover:text-blue-400 transition-all flex-shrink-0">
             CodRoom
           </a>
-          <span className="text-gray-600">|</span>
-          <span className="text-gray-300 text-sm">{room.title}</span>
+          <span className="text-gray-700">|</span>
+          <span className="text-gray-300 text-sm truncate max-w-[200px]">{room.title}</span>
           {room.problem && (
-            <>
-              <span className="text-gray-600">•</span>
-              <span className="text-blue-400 text-sm">{room.problem.title}</span>
-            </>
+            <span className="text-blue-400 text-xs bg-blue-900/20 border border-blue-800 px-2 py-0.5 rounded-full truncate max-w-[150px]">
+              {room.problem.title}
+            </span>
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          {users.map((user) => (
-            <span
-              key={user.id}
-              className={`px-3 py-1 text-xs rounded-full ${
-                user.role === "interviewer"
-                  ? "bg-purple-900/30 text-purple-400 border border-purple-800"
-                  : "bg-blue-900/30 text-blue-400 border border-blue-800"
-              }`}
-            >
-              {user.name}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Timer */}
+          {interviewStatus === "in_progress" && (
+            <span className="font-mono text-sm text-white bg-gray-800 border border-gray-700 px-3 py-1 rounded-lg">
+              ⏱ {formatTimer(timer)}
             </span>
-          ))}
-        </div>
+          )}
+          {interviewStatus === "completed" && (
+            <span className="text-xs text-orange-400 bg-orange-900/20 border border-orange-800 px-3 py-1 rounded-lg">
+              ✓ Completed
+            </span>
+          )}
 
+          {/* Online users */}
+          <div className="flex items-center gap-1">
+            {users.map((u) => (
+              <span
+                key={u.id}
+                className={`px-2 py-0.5 text-xs rounded-full ${
+                  u.role === "interviewer"
+                    ? "bg-purple-900/30 text-purple-400 border border-purple-800"
+                    : "bg-blue-900/30 text-blue-400 border border-blue-800"
+                }`}
+              >
+                {u.name}
+              </span>
+            ))}
+          </div>
+
+          {/* Connection dot */}
+          <span className={`text-xs px-2 py-0.5 rounded-full border ${
+            isConnected
+              ? "bg-green-900/30 text-green-400 border-green-800"
+              : "bg-red-900/30 text-red-400 border-red-800"
+          }`}>
+            {isConnected ? "● Live" : "● Off"}
+          </span>
+        </div>
+      </div>
+
+      {/* ── Toolbar Strip ── */}
+      <div className="flex items-center justify-between px-4 py-1.5 bg-gray-900/60 border-b border-gray-800 flex-shrink-0">
         <div className="flex items-center gap-2">
-          {/* Problem Toggle */}
           {room.problem && (
             <button
               onClick={() => setShowProblem(!showProblem)}
-              className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                showProblem
-                  ? "bg-orange-600 text-white"
-                  : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+              className={`px-3 py-1 text-xs rounded-md transition-all ${
+                showProblem ? "bg-orange-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
               }`}
             >
               📋 Problem
             </button>
           )}
-
           <button
-            onClick={() => setShowVideo(!showVideo)}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-              showVideo
-                ? "bg-green-600 text-white"
-                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            onClick={() => setShowOutput(!showOutput)}
+            className={`px-3 py-1 text-xs rounded-md transition-all ${
+              showOutput ? "bg-gray-700 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
             }`}
           >
-            🎥 Video
+            {showOutput ? "▼ Output" : "▶ Output"}
           </button>
+        </div>
 
-          <button
-            onClick={() => setActivePanel(activePanel === "chat" ? null : "chat")}
-            className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-              activePanel === "chat"
-                ? "bg-blue-600 text-white"
-                : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-            }`}
-          >
-            💬 Chat
-          </button>
-
-          {role === "interviewer" && (
-            <button
-              onClick={() => setActivePanel(activePanel === "notes" ? null : "notes")}
-              className={`px-3 py-1.5 text-xs rounded-lg transition-all ${
-                activePanel === "notes"
-                  ? "bg-purple-600 text-white"
-                  : "bg-gray-800 text-gray-400 hover:bg-gray-700"
-              }`}
-            >
-              📝 Notes
-            </button>
-          )}
-
+        <div className="flex items-center gap-2">
+          {/* Run */}
           <button
             onClick={handleRunCode}
             disabled={isRunning}
-            className={`px-5 py-1.5 rounded-lg font-medium text-sm flex items-center gap-2 transition-all ${
-              isRunning
-                ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-                : "bg-green-600 hover:bg-green-700 text-white"
+            className={`px-5 py-1 rounded-md font-medium text-sm transition-all ${
+              isRunning ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-700 text-white"
             }`}
           >
-            {isRunning ? "Running..." : "▶ Run Code"}
+            {isRunning ? "⏳ Running..." : "▶ Run"}
           </button>
 
-          <span
-            className={`px-3 py-1 text-xs font-medium rounded-full ${
-              isConnected
-                ? "bg-green-900/30 text-green-400 border border-green-800"
-                : "bg-red-900/30 text-red-400 border border-red-800"
-            }`}
-          >
-            {isConnected ? "● Connected" : "● Disconnected"}
-          </span>
+          {/* Interview controls — interviewer only */}
+          {isInterviewer && interviewStatus === "waiting" && (
+            <button
+              onClick={handleStartInterview}
+              className="px-4 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md font-medium transition-all"
+            >
+              🎬 Start Interview
+            </button>
+          )}
+          {isInterviewer && interviewStatus === "in_progress" && (
+            <button
+              onClick={handleEndInterview}
+              className="px-4 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md font-medium transition-all"
+            >
+              🏁 End Interview
+            </button>
+          )}
+          {isInterviewer && interviewStatus === "completed" && (
+            <button
+              onClick={() => router.push(`/room/${roomId}/playback`)}
+              className="px-4 py-1 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded-md font-medium transition-all"
+            >
+              🎬 Playback
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Main Content */}
+      {/* ── Main 3-column body ── */}
       <div className="flex-1 flex overflow-hidden">
+
         {/* Left: Problem Panel */}
         {showProblem && room.problem && (
-          <div className="w-96">
+          <div className="w-80 flex-shrink-0 border-r border-gray-800 overflow-hidden">
             <ProblemPanel problem={room.problem} />
           </div>
         )}
 
         {/* Center: Editor + Output */}
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1" style={{ minHeight: "60%" }}>
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          <div className={`${showOutput ? "flex-1" : "h-full"} overflow-hidden`}>
             <CodeEditor
               language={language}
               onLanguageChange={handleLanguageChange}
@@ -343,33 +411,54 @@ export default function RoomPage() {
               onCodeChange={handleCodeChange}
             />
           </div>
-          <div style={{ height: "35%" }}>
-            <OutputPanel output={output} isRunning={isRunning} />
-          </div>
+
+          {showOutput && (
+            <div className="h-48 flex-shrink-0 border-t border-gray-800 overflow-hidden">
+              <OutputPanel output={output} isRunning={isRunning} />
+            </div>
+          )}
         </div>
 
-        {/* Right: Side Panel */}
-        {(activePanel || showVideo) && (
-          <div className="w-80 flex flex-col border-l border-gray-800">
-            <div className={`p-3 border-b border-gray-800 ${!showVideo ? "hidden" : ""}`}>
-              <VideoPanel
-                isActive={showVideo}
-                sharePeerId={sharePeerId}
-                onPeerIdReceived={onPeerIdReceived}
-              />
-            </div>
-            {activePanel && (
-              <div className="flex-1 overflow-hidden">
-                {activePanel === "chat" && (
-                  <ChatPanel messages={messages} onSendMessage={sendMessage} userName={userName} />
-                )}
-                {activePanel === "notes" && (
-                  <NotesPanel roomId={roomId} />
-                )}
+        {/* Right: Tabbed Panel */}
+        <div className="w-72 flex-shrink-0 flex flex-col border-l border-gray-800 bg-gray-900">
+          {/* Tab bar */}
+          <div className="flex border-b border-gray-800 flex-shrink-0">
+            {["chat", ...(isInterviewer ? ["notes"] : []), "video"].map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setRightTab(tab)}
+                className={`flex-1 py-2 text-xs font-medium capitalize transition-all ${
+                  rightTab === tab
+                    ? "text-white border-b-2 border-blue-500 bg-gray-800/50"
+                    : "text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                {tab === "chat" && "💬 Chat"}
+                {tab === "notes" && "📝 Notes"}
+                {tab === "video" && "🎥 Video"}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 overflow-hidden">
+            {rightTab === "chat" && (
+              <ChatPanel messages={messages} onSendMessage={sendMessage} userName={session.userName} />
+            )}
+            {rightTab === "notes" && isInterviewer && (
+              <NotesPanel roomId={roomId} />
+            )}
+            {rightTab === "video" && (
+              <div className="h-full overflow-y-auto p-3">
+                <VideoPanel
+                  isActive={rightTab === "video"}
+                  sharePeerId={sharePeerId}
+                  onPeerIdReceived={onPeerIdReceived}
+                />
               </div>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
