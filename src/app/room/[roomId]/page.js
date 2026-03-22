@@ -5,10 +5,55 @@ import { useParams, useRouter } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
 import ProblemPanel from "@/components/editor/ProblemPanel";
+import TestCaseRunner from "@/components/editor/TestCaseRunner";
 import ChatPanel from "@/components/ui/ChatPanel";
 import NotesPanel from "@/components/ui/NotesPanel";
+import SecurityWarning from "@/components/ui/SecurityWarning";
+import SecurityPanel from "@/components/ui/SecurityPanel";
 import VideoPanel from "@/components/video/VideoPanel";
 import useSocket from "@/hooks/useSocket";
+import useSecurityMonitor from "@/hooks/useSecurityMonitor";
+import { toast } from "sonner";
+import {
+  Play, Square, SkipForward, Wifi, WifiOff, Clock,
+  MessageSquare, StickyNote, Video, Shield, ChevronLeft,
+  ChevronRight, GripVertical, Trash2, LayoutPanelLeft
+} from "lucide-react";
+
+// ── Resizable divider ──────────────────────────────────────────
+function ResizeDivider({ onDrag }) {
+  const dragging = useRef(false);
+
+  function onMouseDown(e) {
+    e.preventDefault();
+    dragging.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    function onMove(ev) {
+      if (dragging.current) onDrag(ev.clientX);
+    }
+    function onUp() {
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className="w-1 flex-shrink-0 bg-white/[0.04] hover:bg-violet-500/40 cursor-col-resize flex items-center justify-center group transition-colors"
+      title="Drag to resize"
+    >
+      <GripVertical size={12} className="text-white/20 group-hover:text-violet-400 transition-colors" />
+    </div>
+  );
+}
 
 export default function RoomPage() {
   const params = useParams();
@@ -24,62 +69,59 @@ export default function RoomPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [showProblem, setShowProblem] = useState(true);
   const [showOutput, setShowOutput] = useState(true);
-  const [rightTab, setRightTab] = useState("chat"); // "chat" | "notes" | "video"
+  const [rightTab, setRightTab] = useState("chat");
+  const [showSecurityWarning, setShowSecurityWarning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
-  const [session, setSession] = useState({
-    userName: "",
-    role: "candidate",
-    joined: false,
-  });
+  // Resizable problem panel width (px)
+  const [problemWidth, setProblemWidth] = useState(320);
+  const containerRef = useRef(null);
 
+  const [session, setSession] = useState({ userName: "", role: "candidate", joined: false });
   const [interviewId, setInterviewId] = useState(null);
   const [interviewStatus, setInterviewStatus] = useState("waiting");
   const [timer, setTimer] = useState(0);
   const timerRef = useRef(null);
 
+  const { violations, warningCount, isFullscreen, requestFullscreen } = useSecurityMonitor(
+    interviewStatus === "in_progress" && session.role === "candidate",
+    (violation) => {
+      setShowSecurityWarning(true);
+      sendMessage(`⚠️ Security: ${violation.details}`);
+    }
+  );
+
   const {
-    isConnected,
-    users,
-    messages,
-    emitCodeChange,
-    emitLanguageChange,
-    emitCodeOutput,
-    sendMessage,
-    sharePeerId,
-    emitSetInterviewId,
-    onCodeUpdate,
-    onLanguageUpdate,
-    onOutputUpdate,
-    onPeerIdReceived,
-    onInterviewStarted,
+    isConnected, serverStateLost, users, messages, timelineEvents,
+    emitCodeChange, emitLanguageChange, emitCodeOutput, emitTimelineEvent,
+    sendMessage, sharePeerId, emitSetInterviewId,
+    onCodeUpdate, onLanguageUpdate, onOutputUpdate, onPeerIdReceived, onInterviewStarted,
   } = useSocket(session.joined ? roomId : null, session.userName, session.role);
 
   useEffect(() => {
-    onCodeUpdate((newCode) => setCode(newCode));
-    onLanguageUpdate((newLang) => setLanguage(newLang));
-    onOutputUpdate((newOutput) => setOutput(newOutput));
-  }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate]);
-
-  useEffect(() => {
+    onCodeUpdate((c) => setCode(c));
+    onLanguageUpdate((l) => setLanguage(l));
+    onOutputUpdate((o) => setOutput(o));
     onInterviewStarted((id) => {
       setInterviewId(id);
-      setInterviewStatus("in_progress");
+      setInterviewStatus((prev) => (prev === "waiting" ? "in_progress" : prev));
     });
-  }, [onInterviewStarted]);
+  }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate, onInterviewStarted]);
+
+  useEffect(() => {
+    if (interviewStatus === "in_progress" && session.role === "candidate") requestFullscreen();
+  }, [interviewStatus, session.role, requestFullscreen]);
 
   useEffect(() => {
     if (interviewStatus === "in_progress") {
       timerRef.current = setInterval(() => setTimer((p) => p + 1), 1000);
     } else {
       clearInterval(timerRef.current);
-      timerRef.current = null;
     }
     return () => clearInterval(timerRef.current);
   }, [interviewStatus]);
 
-  useEffect(() => {
-    fetchRoom();
-  }, []);
+  useEffect(() => { fetchRoom(); }, []);
 
   function formatTimer(s) {
     const h = Math.floor(s / 3600);
@@ -91,16 +133,31 @@ export default function RoomPage() {
 
   async function fetchRoom() {
     try {
+      const rawToken = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("joinToken") : null;
+
+      if (rawToken) {
+        const exchangeRes = await fetch(`/api/rooms/${roomId}/join`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ joinToken: rawToken }),
+        });
+        if (!exchangeRes.ok) {
+          const d = await exchangeRes.json().catch(() => ({}));
+          setError(d.error || "Invalid invite link");
+          setLoading(false);
+          return;
+        }
+        window.history.replaceState({}, "", `/room/${roomId}`);
+      }
+
       const res = await fetch(`/api/rooms/${roomId}`);
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Room not found"); return; }
 
       setRoom(data.room);
       setLanguage(data.room.language || "javascript");
-      setCode(
-        data.room.problem?.starterCode ||
-        LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || ""
-      );
+      setCode(data.room.problem?.starterCode || LANGUAGE_CONFIG[data.room.language || "javascript"]?.defaultCode || "");
       setShowProblem(!!data.room.problem);
 
       if (data.room.interview) {
@@ -112,16 +169,14 @@ export default function RoomPage() {
         const meRes = await fetch("/api/auth/me");
         if (meRes.ok) {
           const meData = await meRes.json();
-          if (meData.user.userId === data.room.createdById) {
+          const myId = meData.user?.userId ?? meData.user?.id;
+          if (myId && myId === data.room.createdById) {
             setSession({ userName: meData.user.name, role: "interviewer", joined: true });
           }
         }
       } catch {}
-    } catch {
-      setError("Failed to load room");
-    } finally {
-      setLoading(false);
-    }
+    } catch { setError("Failed to load room"); }
+    finally { setLoading(false); }
   }
 
   async function handleStartInterview() {
@@ -136,46 +191,49 @@ export default function RoomPage() {
         setInterviewId(data.interview.id);
         setInterviewStatus("in_progress");
         emitSetInterviewId(data.interview.id);
-      } else {
-        alert(data.error || "Failed to start interview");
-      }
-    } catch (err) {
-      console.error("Failed to start interview:", err);
-    }
+        toast.success("Interview started!");
+      } else toast.error(data.error || "Failed to start interview");
+    } catch (err) { console.error(err); toast.error("Failed to start interview"); }
   }
 
   async function handleEndInterview() {
-    if (!confirm("Are you sure you want to end this interview?")) return;
+    if (!confirm("End this interview?")) return;
     try {
       const res = await fetch(`/api/interviews/${interviewId}/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ finalCode: code, language }),
       });
-      const data = await res.json();
       if (res.ok) {
         setInterviewStatus("completed");
+        toast.success("Interview ended. Generating report...");
         router.push(`/room/${roomId}/report`);
-      } else {
-        alert(data.error || "Failed to end interview");
-      }
-    } catch (err) {
-      console.error("Failed to end interview:", err);
-    }
+      } else { const d = await res.json(); toast.error(d.error || "Failed to end interview"); }
+    } catch (err) { console.error(err); toast.error("Failed to end interview"); }
+  }
+
+  async function handleDeleteInterview() {
+    const interviewId2 = room?.interview?.id;
+    if (!interviewId2) return;
+    if (!confirm("Delete this interview? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/interviews/${interviewId2}`, { method: "DELETE" });
+      if (res.ok) { toast.success("Interview deleted"); router.push("/dashboard"); }
+      else toast.error("Delete failed.");
+    } finally { setDeleting(false); }
   }
 
   const handleCodeChange = useCallback(
-    (newCode) => { setCode(newCode); emitCodeChange(newCode); },
-    [emitCodeChange]
+    (c) => { setCode(c); emitCodeChange(c); }, [emitCodeChange]
   );
 
   const handleLanguageChange = useCallback(
-    (newLang) => {
-      setLanguage(newLang);
-      if (!room?.problem?.starterCode) setCode(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
-      emitLanguageChange(newLang);
-    },
-    [emitLanguageChange, room]
+    (l) => {
+      setLanguage(l);
+      if (!room?.problem?.starterCode) setCode(LANGUAGE_CONFIG[l]?.defaultCode || "");
+      emitLanguageChange(l);
+    }, [emitLanguageChange, room]
   );
 
   async function handleRunCode() {
@@ -183,26 +241,28 @@ export default function RoomPage() {
       if (!code.trim()) setOutput({ status: "error", output: "No code to run", type: "Error" });
       return;
     }
-    setIsRunning(true);
-    setOutput(null);
-    setShowOutput(true);
+    setIsRunning(true); setOutput(null); setShowOutput(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
     try {
       const res = await fetch("/api/execute", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, language }),
+        signal: controller.signal,
       });
       const data = await res.json();
       const result = res.ok ? data : { status: "error", output: data.error || "Execution failed", type: "Error" };
       setOutput(result);
       emitCodeOutput(result);
-    } catch {
-      const err = { status: "error", output: "Failed to connect to execution server", type: "Error" };
-      setOutput(err);
-      emitCodeOutput(err);
-    } finally {
-      setIsRunning(false);
-    }
+      if (result.status === "error") toast.error("Execution failed");
+      else toast.success("Code executed successfully");
+      emitTimelineEvent({ type: result.status === "error" ? "run_fail" : "run_pass", label: result.status === "error" ? "Run Failed" : "Run Passed" });
+    } catch (err) {
+      const isTimeout = err.name === "AbortError";
+      const result = { status: "error", output: isTimeout ? "Request timed out (15s)." : "Failed to connect to execution server", type: isTimeout ? "Timeout" : "Error" };
+      setOutput(result); emitCodeOutput(result);
+    } finally { clearTimeout(timeoutId); setIsRunning(false); }
   }
 
   function handleJoin(e) {
@@ -211,52 +271,58 @@ export default function RoomPage() {
     if (name) setSession({ userName: name, role: "candidate", joined: true });
   }
 
-  // ─── Loading / Error / Join screens ──────────────────────────
+  // Resize handler
+  function handleProblemResize(clientX) {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const newWidth = Math.min(600, Math.max(220, clientX - rect.left));
+    setProblemWidth(newWidth);
+  }
 
+  // ── Loading ──
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
-        <div className="text-gray-400 text-lg">Loading room...</div>
+      <div className="flex items-center justify-center min-h-screen bg-[#0d0d14]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-slate-500 text-sm">Loading room...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
+      <div className="flex items-center justify-center min-h-screen bg-[#0d0d14]">
         <div className="text-center">
-          <div className="text-6xl mb-4">😵</div>
-          <h2 className="text-xl font-semibold text-white mb-2">{error}</h2>
-          <a href="/dashboard" className="text-blue-400 hover:text-blue-300">Back to Dashboard</a>
+          <div className="text-5xl mb-4">😵</div>
+          <h2 className="text-lg font-semibold text-white mb-2">{error}</h2>
+          <a href="/dashboard" className="text-violet-400 hover:text-violet-300 text-sm">← Dashboard</a>
         </div>
       </div>
     );
   }
 
+  // ── Join screen ──
   if (!session.joined) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950 px-4">
-        <div className="w-full max-w-md">
+      <div className="flex items-center justify-center min-h-screen bg-[#0d0d14] px-4">
+        <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+        <div className="w-full max-w-sm relative z-10">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-white mb-2">CodRoom</h1>
-            <p className="text-gray-400">Join the interview</p>
+            <div className="w-12 h-12 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-violet-500 to-cyan-500 flex items-center justify-center text-xl font-black text-white">C</div>
+            <h1 className="text-2xl font-black text-white mb-1">{room.title}</h1>
+            {room.problem && <p className="text-violet-400 text-sm">Problem: {room.problem.title}</p>}
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-8">
-            <h2 className="text-xl font-semibold text-white mb-1">{room.title}</h2>
-            {room.problem && <p className="text-blue-400 text-sm mb-2">Problem: {room.problem.title}</p>}
-            <p className="text-gray-400 text-sm mb-6">Enter your name to join</p>
+          <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-7">
+            <p className="text-slate-500 text-sm mb-5 text-center">Enter your name to join the interview</p>
             <form onSubmit={handleJoin}>
               <input
-                name="name"
-                type="text"
-                placeholder="Your name"
-                className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+                name="name" type="text" placeholder="Your name"
+                className="w-full px-4 py-3 bg-white/[0.04] border border-white/[0.08] rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500/50 mb-4 transition-all"
                 autoFocus
               />
-              <button
-                type="submit"
-                className="w-full px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-all"
-              >
+              <button type="submit" className="w-full py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-semibold transition-all">
                 Join Room
               </button>
             </form>
@@ -266,144 +332,167 @@ export default function RoomPage() {
     );
   }
 
-  // ─── Main Room UI ─────────────────────────────────────────────
-
   const isInterviewer = session.role === "interviewer";
+  const rightTabs = ["chat", ...(isInterviewer ? ["notes", "security"] : []), "video"];
+
+  const TAB_META = {
+    chat:     { icon: MessageSquare, label: "Chat" },
+    notes:    { icon: StickyNote,    label: "Notes" },
+    security: { icon: Shield,        label: "Security", badge: violations.length },
+    video:    { icon: Video,         label: "Video" },
+  };
 
   return (
-    <div className="h-screen flex flex-col bg-gray-950 overflow-hidden">
+    <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200">
 
-      {/* ── Top Header ── */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800 flex-shrink-0">
+      {showSecurityWarning && (
+        <SecurityWarning warningCount={warningCount} onDismiss={() => setShowSecurityWarning(false)} />
+      )}
+
+      {/* ── Top bar ── */}
+      <div className="flex items-center justify-between px-4 h-11 bg-[#111118] border-b border-white/[0.06] flex-shrink-0 gap-3">
+        {/* Left */}
         <div className="flex items-center gap-3 min-w-0">
-          <a href="/dashboard" className="text-base font-bold text-white hover:text-blue-400 transition-all flex-shrink-0">
-            CodRoom
+          <a href="/dashboard" className="flex items-center gap-1.5 text-slate-500 hover:text-white transition-colors flex-shrink-0 text-sm font-bold">
+            <LayoutPanelLeft size={15} />
+            <span className="hidden sm:inline">CodRoom</span>
           </a>
-          <span className="text-gray-700">|</span>
-          <span className="text-gray-300 text-sm truncate max-w-[200px]">{room.title}</span>
+          <span className="text-white/10">|</span>
+          <span className="text-slate-400 text-sm truncate max-w-[140px] sm:max-w-[220px]">{room.title}</span>
           {room.problem && (
-            <span className="text-blue-400 text-xs bg-blue-900/20 border border-blue-800 px-2 py-0.5 rounded-full truncate max-w-[150px]">
+            <span className="hidden md:inline text-xs px-2 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-full truncate max-w-[140px]">
               {room.problem.title}
             </span>
           )}
         </div>
 
+        {/* Center — timer + status */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {/* Timer */}
           {interviewStatus === "in_progress" && (
-            <span className="font-mono text-sm text-white bg-gray-800 border border-gray-700 px-3 py-1 rounded-lg">
-              ⏱ {formatTimer(timer)}
+            <span className="flex items-center gap-1.5 font-mono text-xs text-white bg-white/[0.06] border border-white/[0.08] px-3 py-1 rounded-lg">
+              <Clock size={11} className="text-violet-400" />
+              {formatTimer(timer)}
             </span>
           )}
           {interviewStatus === "completed" && (
-            <span className="text-xs text-orange-400 bg-orange-900/20 border border-orange-800 px-3 py-1 rounded-lg">
+            <span className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-lg">
               ✓ Completed
             </span>
           )}
+        </div>
 
-          {/* Online users */}
-          <div className="flex items-center gap-1">
+        {/* Right */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Users */}
+          <div className="hidden sm:flex items-center gap-1">
             {users.map((u) => (
-              <span
-                key={u.id}
-                className={`px-2 py-0.5 text-xs rounded-full ${
-                  u.role === "interviewer"
-                    ? "bg-purple-900/30 text-purple-400 border border-purple-800"
-                    : "bg-blue-900/30 text-blue-400 border border-blue-800"
-                }`}
-              >
-                {u.name}
-              </span>
+              <span key={u.id} className={`text-xs px-2 py-0.5 rounded-full border ${
+                u.role === "interviewer"
+                  ? "bg-violet-500/10 text-violet-400 border-violet-500/20"
+                  : "bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+              }`}>{u.name}</span>
             ))}
           </div>
 
-          {/* Connection dot */}
-          <span className={`text-xs px-2 py-0.5 rounded-full border ${
-            isConnected
-              ? "bg-green-900/30 text-green-400 border-green-800"
-              : "bg-red-900/30 text-red-400 border-red-800"
+          {/* Connection */}
+          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
+            isConnected ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
           }`}>
-            {isConnected ? "● Live" : "● Off"}
+            {isConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
+            <span className="hidden sm:inline">{isConnected ? "Live" : "Off"}</span>
           </span>
+
+          {serverStateLost && (
+            <span className="text-xs px-2 py-0.5 rounded-full border bg-amber-500/10 text-amber-400 border-amber-500/20">⚠ State lost</span>
+          )}
         </div>
       </div>
 
-      {/* ── Toolbar Strip ── */}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-gray-900/60 border-b border-gray-800 flex-shrink-0">
-        <div className="flex items-center gap-2">
+      {/* ── Toolbar ── */}
+      <div className="flex items-center justify-between px-4 h-9 bg-[#0f0f17] border-b border-white/[0.05] flex-shrink-0 gap-2">
+        <div className="flex items-center gap-1.5">
           {room.problem && (
             <button
               onClick={() => setShowProblem(!showProblem)}
-              className={`px-3 py-1 text-xs rounded-md transition-all ${
-                showProblem ? "bg-orange-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-all ${
+                showProblem ? "bg-violet-600/20 text-violet-300 border border-violet-500/30" : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"
               }`}
             >
-              📋 Problem
+              {showProblem ? <ChevronLeft size={12} /> : <ChevronRight size={12} />}
+              Problem
             </button>
           )}
           <button
             onClick={() => setShowOutput(!showOutput)}
-            className={`px-3 py-1 text-xs rounded-md transition-all ${
-              showOutput ? "bg-gray-700 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+            className={`px-2.5 py-1 text-xs rounded-md transition-all ${
+              showOutput ? "bg-white/[0.07] text-slate-300" : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"
             }`}
           >
-            {showOutput ? "▼ Output" : "▶ Output"}
+            Output
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           {/* Run */}
           <button
             onClick={handleRunCode}
             disabled={isRunning}
-            className={`px-5 py-1 rounded-md font-medium text-sm transition-all ${
-              isRunning ? "bg-gray-700 text-gray-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-700 text-white"
+            className={`flex items-center gap-1.5 px-4 py-1 rounded-md text-xs font-semibold transition-all ${
+              isRunning ? "bg-white/[0.05] text-slate-500 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-500 text-white"
             }`}
           >
-            {isRunning ? "⏳ Running..." : "▶ Run"}
+            <Play size={11} />
+            {isRunning ? "Running…" : "Run"}
           </button>
 
-          {/* Interview controls — interviewer only */}
+          {/* Interview controls */}
           {isInterviewer && interviewStatus === "waiting" && (
-            <button
-              onClick={handleStartInterview}
-              className="px-4 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md font-medium transition-all"
-            >
-              🎬 Start Interview
+            <button onClick={handleStartInterview} className="flex items-center gap-1.5 px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white text-xs rounded-md font-semibold transition-all">
+              <Play size={11} /> Start
             </button>
           )}
           {isInterviewer && interviewStatus === "in_progress" && (
-            <button
-              onClick={handleEndInterview}
-              className="px-4 py-1 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md font-medium transition-all"
-            >
-              🏁 End Interview
+            <button onClick={handleEndInterview} className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs rounded-md font-semibold transition-all">
+              <Square size={11} /> End
             </button>
           )}
           {isInterviewer && interviewStatus === "completed" && (
+            <button onClick={() => router.push(`/room/${roomId}/playback`)} className="flex items-center gap-1.5 px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded-md font-semibold transition-all">
+              <SkipForward size={11} /> Playback
+            </button>
+          )}
+
+          {/* Delete */}
+          {isInterviewer && room?.interview && (
             <button
-              onClick={() => router.push(`/room/${roomId}/playback`)}
-              className="px-4 py-1 bg-orange-600 hover:bg-orange-700 text-white text-sm rounded-md font-medium transition-all"
+              onClick={handleDeleteInterview}
+              disabled={deleting}
+              className="flex items-center gap-1 px-2.5 py-1 text-xs text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded-md transition-all disabled:opacity-40"
+              title="Delete interview"
             >
-              🎬 Playback
+              <Trash2 size={11} />
+              <span className="hidden sm:inline">{deleting ? "…" : "Delete"}</span>
             </button>
           )}
         </div>
       </div>
 
-      {/* ── Main 3-column body ── */}
-      <div className="flex-1 flex overflow-hidden">
+      {/* ── Main body ── */}
+      <div ref={containerRef} className="flex-1 flex overflow-hidden">
 
-        {/* Left: Problem Panel */}
+        {/* Problem panel — resizable */}
         {showProblem && room.problem && (
-          <div className="w-80 flex-shrink-0 border-r border-gray-800 overflow-hidden">
-            <ProblemPanel problem={room.problem} />
-          </div>
+          <>
+            <div style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="flex-shrink-0 overflow-hidden border-r border-white/[0.05]">
+              <ProblemPanel problem={room.problem} />
+            </div>
+            <ResizeDivider onDrag={handleProblemResize} />
+          </>
         )}
 
-        {/* Center: Editor + Output */}
+        {/* Editor + Output */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <div className={`${showOutput ? "flex-1" : "h-full"} overflow-hidden`}>
+          <div className={showOutput ? "flex-1 overflow-hidden" : "h-full overflow-hidden"}>
             <CodeEditor
               language={language}
               onLanguageChange={handleLanguageChange}
@@ -411,52 +500,79 @@ export default function RoomPage() {
               onCodeChange={handleCodeChange}
             />
           </div>
-
           {showOutput && (
-            <div className="h-48 flex-shrink-0 border-t border-gray-800 overflow-hidden">
-              <OutputPanel output={output} isRunning={isRunning} />
+            <div className="h-44 flex-shrink-0 border-t border-white/[0.05] overflow-hidden">
+              {room?.problem?.testCases ? (
+                <TestCaseRunner testCases={room.problem.testCases} code={code} language={language} />
+              ) : (
+                <OutputPanel output={output} isRunning={isRunning} />
+              )}
             </div>
           )}
         </div>
 
-        {/* Right: Tabbed Panel */}
-        <div className="w-72 flex-shrink-0 flex flex-col border-l border-gray-800 bg-gray-900">
+        {/* Right panel */}
+        <div className="w-64 xl:w-72 flex-shrink-0 flex flex-col border-l border-white/[0.05] bg-[#0f0f17]">
           {/* Tab bar */}
-          <div className="flex border-b border-gray-800 flex-shrink-0">
-            {["chat", ...(isInterviewer ? ["notes"] : []), "video"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setRightTab(tab)}
-                className={`flex-1 py-2 text-xs font-medium capitalize transition-all ${
-                  rightTab === tab
-                    ? "text-white border-b-2 border-blue-500 bg-gray-800/50"
-                    : "text-gray-500 hover:text-gray-300"
-                }`}
-              >
-                {tab === "chat" && "💬 Chat"}
-                {tab === "notes" && "📝 Notes"}
-                {tab === "video" && "🎥 Video"}
-              </button>
-            ))}
+          <div className="flex border-b border-white/[0.05] flex-shrink-0">
+            {rightTabs.map((tab) => {
+              const meta = TAB_META[tab];
+              return (
+                <button
+                  key={tab}
+                  onClick={() => setRightTab(tab)}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium transition-all relative ${
+                    rightTab === tab ? "text-white border-b-2 border-violet-500 bg-white/[0.03]" : "text-slate-600 hover:text-slate-400"
+                  }`}
+                >
+                  <meta.icon size={12} />
+                  <span className="hidden sm:inline">{meta.label}</span>
+                  {meta.badge > 0 && (
+                    <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-rose-500 text-white text-[9px] rounded-full flex items-center justify-center">
+                      {meta.badge}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {/* Tab content */}
-          <div className="flex-1 overflow-hidden">
-            {rightTab === "chat" && (
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+            {/* Chat — always rendered so messages are never lost */}
+            <div className={`flex-1 min-h-0 overflow-hidden ${
+              rightTab === "chat" ? "flex flex-col" : "hidden"
+            }`}>
               <ChatPanel messages={messages} onSendMessage={sendMessage} userName={session.userName} />
-            )}
+            </div>
+
             {rightTab === "notes" && isInterviewer && (
-              <NotesPanel roomId={roomId} />
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <NotesPanel roomId={roomId} />
+              </div>
             )}
-            {rightTab === "video" && (
-              <div className="h-full overflow-y-auto p-3">
+            {rightTab === "security" && isInterviewer && (
+              <div className="flex-1 min-h-0 overflow-hidden">
+                <SecurityPanel violations={violations} />
+              </div>
+            )}
+
+            {/* Video tab: video on top, chat below — VideoPanel stays mounted
+                so the camera stream is never torn down when switching tabs */}
+            <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${
+              rightTab === "video" ? "" : "hidden"
+            }`}>
+              {/* Video — fixed height */}
+              <div className="flex-shrink-0 p-2 border-b border-white/[0.05]">
                 <VideoPanel
-                  isActive={rightTab === "video"}
                   sharePeerId={sharePeerId}
                   onPeerIdReceived={onPeerIdReceived}
                 />
               </div>
-            )}
+              {/* Chat below video — fills remaining space */}
+              <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                <ChatPanel messages={messages} onSendMessage={sendMessage} userName={session.userName} />
+              </div>
+            </div>
           </div>
         </div>
       </div>

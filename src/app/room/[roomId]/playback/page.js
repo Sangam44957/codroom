@@ -1,152 +1,115 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Editor from "@monaco-editor/react";
+import {
+  SkipBack, SkipForward, Play, Pause, ChevronLeft,
+  ChevronRight, Clock, Film, Layers
+} from "lucide-react";
 
 export default function PlaybackPage() {
-  const params = useParams();
-  const roomId = params.roomId;
+  const { roomId } = useParams();
+  const router = useRouter();
 
   const [room, setRoom] = useState(null);
   const [snapshots, setSnapshots] = useState([]);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  // Playback state
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
   const timeoutRef = useRef(null);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
-  // Playback engine
   useEffect(() => {
-    // Clear any running timeout on every render of this effect
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-
+    if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
     if (isPlaying && snapshots.length > 1) {
-      if (currentIndex >= snapshots.length - 1) {
-        // Reached the end — stop
-        setIsPlaying(false);
-        return;
-      }
-
-      timeoutRef.current = setTimeout(() => {
-        setCurrentIndex((prev) => prev + 1);
-      }, 1000 / speed);
+      if (currentIndex >= snapshots.length - 1) { setIsPlaying(false); return; }
+      timeoutRef.current = setTimeout(() => setCurrentIndex((p) => p + 1), 1000 / speed);
     }
-
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
-      }
-    };
+    return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
   }, [isPlaying, currentIndex, speed, snapshots.length]);
 
   async function fetchData() {
     try {
       const roomRes = await fetch(`/api/rooms/${roomId}`);
       const roomData = await roomRes.json();
-
-      if (!roomRes.ok) {
-        setError("Room not found");
-        return;
-      }
-
+      if (!roomRes.ok) { setError("Room not found"); return; }
       setRoom(roomData.room);
+      if (!roomData.room.interview) { setError("No interview found for this room."); return; }
 
-      if (!roomData.room.interview) {
-        setError("No interview found for this room. Start and complete an interview first.");
-        return;
-      }
+      const interviewId = roomData.room.interview.id;
+      const allSnapshots = [];
+      let snapCursor = null;
+      do {
+        const url = `/api/interviews/${interviewId}/snapshots?limit=200${snapCursor ? `&cursor=${snapCursor}` : ""}`;
+        const res = await fetch(url);
+        if (!res.ok) break;
+        const data = await res.json();
+        allSnapshots.push(...(data.snapshots || []));
+        snapCursor = data.nextCursor;
+      } while (snapCursor);
 
-      const snapRes = await fetch(
-        `/api/interviews/${roomData.room.interview.id}/snapshots`
-      );
-      const snapData = await snapRes.json();
+      if (allSnapshots.length === 0) { setError("No recording found. Make sure code was typed during the interview."); return; }
+      setSnapshots(allSnapshots);
 
-      if (!snapRes.ok || !snapData.snapshots || snapData.snapshots.length === 0) {
-        setError("No recording found. Make sure code was typed during the interview.");
-        return;
-      }
-
-      setSnapshots(snapData.snapshots);
-    } catch {
-      setError("Failed to load playback data. Please try again.");
-    } finally {
-      setLoading(false);
-    }
+      const allEvents = [];
+      let evtCursor = null;
+      do {
+        const url = `/api/interviews/${interviewId}/events?limit=500${evtCursor ? `&cursor=${evtCursor}` : ""}`;
+        const res = await fetch(url);
+        if (!res.ok) break;
+        const data = await res.json();
+        allEvents.push(...(data.events || []));
+        evtCursor = data.nextCursor;
+      } while (evtCursor);
+      setEvents(allEvents);
+    } catch { setError("Failed to load playback data."); }
+    finally { setLoading(false); }
   }
 
   function togglePlay() {
-    if (currentIndex >= snapshots.length - 1) {
-      // Restart from beginning
-      setCurrentIndex(0);
-      setIsPlaying(true);
-    } else {
-      setIsPlaying((prev) => !prev);
-    }
+    if (currentIndex >= snapshots.length - 1) { setCurrentIndex(0); setIsPlaying(true); }
+    else setIsPlaying((p) => !p);
   }
 
-  function handleSliderChange(e) {
-    setIsPlaying(false);
-    setCurrentIndex(parseInt(e.target.value, 10));
+  function formatTime(ts) {
+    return new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   }
 
-  function formatTime(timestamp) {
-    return new Date(timestamp).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
+  function formatDuration(s) {
+    if (!s) return "0m";
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
   }
-
-  function formatDuration(seconds) {
-    if (!seconds) return "0m 0s";
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m ${s}s`;
-  }
-
-  // ─── Render states ────────────────────────────────────────────
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
-        <div className="text-gray-400 text-lg">Loading playback...</div>
+      <div className="flex items-center justify-center min-h-screen bg-[#080810]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-slate-500 text-sm">Loading playback...</p>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
-        <div className="text-center max-w-md px-4">
-          <div className="text-6xl mb-4">🎬</div>
-          <h2 className="text-xl font-semibold text-white mb-2">{error}</h2>
-          <div className="flex gap-3 justify-center mt-4">
-            <a
-              href={`/room/${roomId}`}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition-all"
-            >
-              Back to Room
-            </a>
-            <a
-              href="/dashboard"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-all"
-            >
+      <div className="flex items-center justify-center min-h-screen bg-[#080810]">
+        <div className="text-center max-w-sm px-4">
+          <Film size={48} className="text-slate-700 mx-auto mb-4" />
+          <h2 className="text-lg font-semibold text-white mb-2">{error}</h2>
+          <div className="flex gap-3 justify-center mt-5">
+            <button onClick={() => router.push(`/room/${roomId}/report`)} className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white text-sm rounded-lg transition-all">
+              View Report
+            </button>
+            <button onClick={() => router.push("/dashboard")} className="px-4 py-2 bg-white/[0.06] hover:bg-white/[0.1] text-slate-300 text-sm rounded-lg transition-all">
               Dashboard
-            </a>
+            </button>
           </div>
         </div>
       </div>
@@ -154,46 +117,52 @@ export default function PlaybackPage() {
   }
 
   const currentSnapshot = snapshots[currentIndex];
-  const progress =
-    snapshots.length > 1 ? (currentIndex / (snapshots.length - 1)) * 100 : 0;
+  const progress = snapshots.length > 1 ? (currentIndex / (snapshots.length - 1)) * 100 : 0;
 
   return (
-    <div className="h-screen flex flex-col bg-gray-950">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-900 border-b border-gray-800 flex-shrink-0">
-        <div className="flex items-center gap-4 min-w-0">
-          <a
-            href="/dashboard"
-            className="text-lg font-bold text-white hover:text-blue-400 transition-all flex-shrink-0"
+    <div className="h-screen flex flex-col bg-[#080810] overflow-hidden">
+
+      {/* ── Cinema header ── */}
+      <div className="flex items-center justify-between px-5 h-12 bg-[#0a0a12] border-b border-white/[0.05] flex-shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            onClick={() => router.push(`/room/${roomId}/report`)}
+            className="text-slate-500 hover:text-white transition-colors flex-shrink-0"
           >
-            CodRoom
-          </a>
-          <span className="text-gray-600">|</span>
-          <span className="text-gray-300 text-sm truncate">{room?.title}</span>
-          <span className="px-3 py-1 text-xs rounded-full bg-orange-900/30 text-orange-400 border border-orange-800 flex-shrink-0">
-            🎬 Playback
+            <ChevronLeft size={18} />
+          </button>
+          <Film size={14} className="text-violet-400 flex-shrink-0" />
+          <span className="text-slate-300 text-sm font-medium truncate">{room?.title}</span>
+          <span className="hidden sm:inline text-xs px-2 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-full flex-shrink-0">
+            Playback
           </span>
         </div>
 
-        <div className="flex items-center gap-4 flex-shrink-0">
+        <div className="flex items-center gap-4 text-xs text-slate-500 flex-shrink-0">
           {room?.interview && (
-            <div className="flex items-center gap-3 text-xs text-gray-400">
-              <span>Duration: {formatDuration(room.interview.duration)}</span>
-              <span className="text-gray-600">•</span>
-              <span>{snapshots.length} snapshots</span>
-            </div>
+            <>
+              <span className="hidden sm:flex items-center gap-1.5">
+                <Clock size={11} /> {formatDuration(room.interview.duration)}
+              </span>
+              <span className="hidden sm:flex items-center gap-1.5">
+                <Layers size={11} /> {snapshots.length} frames
+              </span>
+            </>
           )}
-          <a
-            href={`/room/${roomId}`}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-all border border-gray-700"
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="px-3 py-1.5 bg-white/[0.05] hover:bg-white/[0.09] text-slate-400 hover:text-white rounded-lg border border-white/[0.07] transition-all"
           >
-            Back to Room
-          </a>
+            Dashboard
+          </button>
         </div>
       </div>
 
-      {/* Monaco Editor (read-only playback) */}
-      <div className="flex-1 overflow-hidden">
+      {/* ── Editor (cinema spotlight) ── */}
+      <div className="flex-1 overflow-hidden relative">
+        {/* Subtle vignette */}
+        <div className="absolute inset-0 pointer-events-none z-10"
+          style={{ boxShadow: "inset 0 0 80px rgba(0,0,0,0.5)" }} />
         <Editor
           height="100%"
           language={room?.interview?.language || "javascript"}
@@ -204,127 +173,128 @@ export default function PlaybackPage() {
             fontSize: 14,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            padding: { top: 16 },
+            padding: { top: 20 },
             lineNumbers: "on",
             automaticLayout: true,
-            // Prevent cursor flicker during playback
             renderLineHighlight: "none",
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
           }}
         />
       </div>
 
-      {/* Playback Controls */}
-      <div className="bg-gray-900 border-t border-gray-800 px-6 py-4 flex-shrink-0">
+      {/* ── Playback controls ── */}
+      <div className="bg-[#0a0a12] border-t border-white/[0.05] px-5 py-4 flex-shrink-0">
         <div className="max-w-4xl mx-auto">
-          {/* Timeline row */}
-          <div className="flex items-center gap-4 mb-3">
-            <span className="text-xs text-gray-500 w-24 flex-shrink-0">
+
+          {/* Timeline */}
+          <div className="flex items-center gap-3 mb-4">
+            <span className="text-xs text-slate-600 font-mono w-20 flex-shrink-0">
               {currentSnapshot ? formatTime(currentSnapshot.timestamp) : "--:--:--"}
             </span>
 
-            {/* FIX: Use CSS background gradient for progress instead of an
-                overlapping div that blocked pointer events on the range input */}
-            <div className="flex-1">
+            <div className="flex-1 relative h-6 flex items-center">
+              {/* Track */}
+              <div className="absolute inset-x-0 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-violet-500 to-cyan-500 rounded-full transition-all"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+
+              {/* Event markers */}
+              {snapshots.length > 1 && events.map((evt, i) => {
+                const evtTime = new Date(evt.timestamp).getTime();
+                const startTime = new Date(snapshots[0].timestamp).getTime();
+                const endTime = new Date(snapshots[snapshots.length - 1].timestamp).getTime();
+                const pct = endTime > startTime ? ((evtTime - startTime) / (endTime - startTime)) * 100 : 0;
+                const color = evt.type === "run_pass" ? "#22c55e" : evt.type === "run_fail" ? "#ef4444" : "#f59e0b";
+                return (
+                  <div
+                    key={i}
+                    title={`${evt.label} @ ${formatTime(evt.timestamp)}`}
+                    style={{ position: "absolute", left: `${pct}%`, width: 6, height: 6, borderRadius: "50%", background: color, transform: "translateX(-50%)", zIndex: 2 }}
+                  />
+                );
+              })}
+
+              {/* Scrubber */}
               <input
-                type="range"
-                min="0"
-                max={Math.max(0, snapshots.length - 1)}
-                value={currentIndex}
-                onChange={handleSliderChange}
-                className="w-full h-2 rounded-lg appearance-none cursor-pointer"
-                style={{
-                  background: `linear-gradient(to right, #2563eb ${progress}%, #374151 ${progress}%)`,
-                }}
+                type="range" min="0" max={Math.max(0, snapshots.length - 1)} value={currentIndex}
+                onChange={(e) => { setIsPlaying(false); setCurrentIndex(parseInt(e.target.value, 10)); }}
+                className="absolute inset-x-0 w-full opacity-0 cursor-pointer h-6"
+                style={{ zIndex: 3 }}
               />
             </div>
 
-            <span className="text-xs text-gray-500 w-24 flex-shrink-0 text-right">
-              {snapshots.length > 0
-                ? formatTime(snapshots[snapshots.length - 1].timestamp)
-                : "--:--:--"}
+            <span className="text-xs text-slate-600 font-mono w-20 flex-shrink-0 text-right">
+              {snapshots.length > 0 ? formatTime(snapshots[snapshots.length - 1].timestamp) : "--:--:--"}
             </span>
           </div>
 
-          {/* Control buttons */}
-          <div className="flex items-center justify-center gap-3 flex-wrap">
-            {/* Rewind to start */}
+          {/* Buttons */}
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            {/* Jump to start */}
             <button
-              onClick={() => {
-                setIsPlaying(false);
-                setCurrentIndex(0);
-              }}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-all"
+              onClick={() => { setIsPlaying(false); setCurrentIndex(0); }}
+              className="p-2 text-slate-500 hover:text-white hover:bg-white/[0.06] rounded-lg transition-all"
               title="Jump to start"
             >
-              ⏮
+              <SkipBack size={16} />
             </button>
 
             {/* Step back */}
             <button
-              onClick={() => {
-                setIsPlaying(false);
-                setCurrentIndex((prev) => Math.max(0, prev - 1));
-              }}
+              onClick={() => { setIsPlaying(false); setCurrentIndex((p) => Math.max(0, p - 1)); }}
               disabled={currentIndex === 0}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 rounded-lg text-sm transition-all"
-              title="Previous snapshot"
+              className="p-2 text-slate-500 hover:text-white hover:bg-white/[0.06] rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              ◀ Prev
+              <ChevronLeft size={16} />
             </button>
 
             {/* Play / Pause */}
             <button
               onClick={togglePlay}
-              className="px-8 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium text-sm transition-all min-w-[100px]"
+              className="flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-semibold text-sm transition-all shadow-lg shadow-violet-600/20 min-w-[100px] justify-center"
             >
-              {isPlaying ? "⏸ Pause" : "▶ Play"}
+              {isPlaying ? <><Pause size={15} /> Pause</> : <><Play size={15} /> Play</>}
             </button>
 
             {/* Step forward */}
             <button
-              onClick={() => {
-                setIsPlaying(false);
-                setCurrentIndex((prev) => Math.min(snapshots.length - 1, prev + 1));
-              }}
+              onClick={() => { setIsPlaying(false); setCurrentIndex((p) => Math.min(snapshots.length - 1, p + 1)); }}
               disabled={currentIndex >= snapshots.length - 1}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed text-gray-300 rounded-lg text-sm transition-all"
-              title="Next snapshot"
+              className="p-2 text-slate-500 hover:text-white hover:bg-white/[0.06] rounded-lg transition-all disabled:opacity-30 disabled:cursor-not-allowed"
             >
-              Next ▶
+              <ChevronRight size={16} />
             </button>
 
             {/* Jump to end */}
             <button
-              onClick={() => {
-                setIsPlaying(false);
-                setCurrentIndex(snapshots.length - 1);
-              }}
-              className="px-3 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-lg text-sm transition-all"
+              onClick={() => { setIsPlaying(false); setCurrentIndex(snapshots.length - 1); }}
+              className="p-2 text-slate-500 hover:text-white hover:bg-white/[0.06] rounded-lg transition-all"
               title="Jump to end"
             >
-              ⏭
+              <SkipForward size={16} />
             </button>
 
-            {/* Speed selector */}
-            <div className="flex items-center gap-2 ml-2 pl-4 border-l border-gray-700">
-              <span className="text-xs text-gray-500">Speed:</span>
+            {/* Speed */}
+            <div className="flex items-center gap-1.5 ml-3 pl-4 border-l border-white/[0.06]">
+              <span className="text-xs text-slate-600">Speed</span>
               {[0.5, 1, 2, 4].map((s) => (
                 <button
                   key={s}
                   onClick={() => setSpeed(s)}
-                  className={`px-2 py-1 text-xs rounded transition-all ${
-                    speed === s
-                      ? "bg-blue-600 text-white"
-                      : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                  className={`px-2.5 py-1 text-xs rounded-lg transition-all font-mono ${
+                    speed === s ? "bg-violet-600 text-white" : "bg-white/[0.05] text-slate-500 hover:text-slate-300 hover:bg-white/[0.08]"
                   }`}
                 >
-                  {s}x
+                  {s}×
                 </button>
               ))}
             </div>
 
             {/* Counter */}
-            <span className="text-xs text-gray-500 ml-2">
+            <span className="text-xs text-slate-600 font-mono ml-2">
               {currentIndex + 1} / {snapshots.length}
             </span>
           </div>

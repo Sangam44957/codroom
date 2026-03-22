@@ -3,47 +3,99 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 
+const MAX_MESSAGES = 200;
+
 export default function useSocket(roomId, userName, role) {
   const socketRef = useRef(null);
+  const hasConnectedOnceRef = useRef(false);
+  const reconnectDetectedRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
+  const [serverStateLost, setServerStateLost] = useState(false);
+  const [timelineEvents, setTimelineEvents] = useState([]);
+
+  // Stable handler refs — updated every render, never cause re-subscriptions
+  const handlersRef = useRef({
+    onCodeUpdate: null,
+    onLanguageUpdate: null,
+    onOutputUpdate: null,
+    onPeerIdReceived: null,
+    onInterviewStarted: null,
+  });
 
   useEffect(() => {
-    // Don't connect until roomId and userName are both available
     if (!roomId || !userName) return;
 
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
     const socket = io(socketUrl, {
       transports: ["websocket"],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
     });
 
     socketRef.current = socket;
 
     socket.on("connect", () => {
+      if (hasConnectedOnceRef.current) {
+        reconnectDetectedRef.current = true;
+      }
+      hasConnectedOnceRef.current = true;
       setIsConnected(true);
       socket.emit("join-room", { roomId, userName, role });
     });
 
-    socket.on("disconnect", () => {
-      setIsConnected(false);
+    socket.on("disconnect", () => setIsConnected(false));
+
+    socket.on("room-state", ({ users, messages, interviewId, events, isEmptyRoom }) => {
+      setUsers(users || []);
+      setMessages(messages?.slice(-MAX_MESSAGES) || []);
+      setTimelineEvents(events || []);
+
+      // Show "State lost" only when a reconnect happened and the server reports
+      // an effectively empty room state.
+      if (reconnectDetectedRef.current && isEmptyRoom) {
+        setServerStateLost(true);
+      } else {
+        // Clear stale warning once real state is available again.
+        setServerStateLost(false);
+        reconnectDetectedRef.current = false;
+      }
+
+      if (interviewId && handlersRef.current.onInterviewStarted) {
+        handlersRef.current.onInterviewStarted(interviewId);
+      }
     });
 
-    socket.on("room-state", ({ users, messages }) => {
-      setUsers(users || []);
-      setMessages(messages || []);
-    });
-
-    socket.on("user-joined", ({ users }) => {
-      setUsers(users || []);
-    });
-
-    socket.on("user-left", ({ users }) => {
-      setUsers(users || []);
-    });
+    socket.on("user-joined", ({ users }) => setUsers(users || []));
+    socket.on("user-left", ({ users }) => setUsers(users || []));
 
     socket.on("chat-message", (message) => {
-      setMessages((prev) => [...prev, message]);
+      setMessages((prev) => {
+        const next = [...prev, message];
+        return next.length > MAX_MESSAGES ? next.slice(-MAX_MESSAGES) : next;
+      });
+    });
+
+    // Route all dynamic events through stable handler refs
+    socket.on("code-update", ({ code }) => {
+      handlersRef.current.onCodeUpdate?.(code);
+    });
+    socket.on("language-update", ({ language }) => {
+      handlersRef.current.onLanguageUpdate?.(language);
+    });
+    socket.on("output-update", ({ output }) => {
+      handlersRef.current.onOutputUpdate?.(output);
+    });
+    socket.on("timeline-event", (event) => {
+      setTimelineEvents((prev) => [...prev, event]);
+    });
+
+    socket.on("peer-id-received", ({ peerId }) => {
+      handlersRef.current.onPeerIdReceived?.(peerId);
+    });
+    socket.on("interview-started", ({ interviewId }) => {
+      handlersRef.current.onInterviewStarted?.(interviewId);
     });
 
     return () => {
@@ -52,100 +104,82 @@ export default function useSocket(roomId, userName, role) {
       setIsConnected(false);
       setUsers([]);
       setMessages([]);
+      setServerStateLost(false);
+      setTimelineEvents([]);
+      hasConnectedOnceRef.current = false;
+      reconnectDetectedRef.current = false;
     };
   }, [roomId, userName, role]);
 
   // ─── Emit helpers ────────────────────────────────────────────
 
   const emitCodeChange = useCallback(
-    (code) => {
-      socketRef.current?.emit("code-change", { roomId, code });
-    },
+    (code) => socketRef.current?.emit("code-change", { roomId, code }),
     [roomId]
   );
 
   const emitLanguageChange = useCallback(
-    (language) => {
-      socketRef.current?.emit("language-change", { roomId, language });
-    },
+    (language) => socketRef.current?.emit("language-change", { roomId, language }),
     [roomId]
   );
 
   const emitCodeOutput = useCallback(
-    (output) => {
-      socketRef.current?.emit("code-output", { roomId, output });
-    },
+    (output) => socketRef.current?.emit("code-output", { roomId, output }),
+    [roomId]
+  );
+
+  const emitTimelineEvent = useCallback(
+    (event) => socketRef.current?.emit("timeline-event", { roomId, event }),
     [roomId]
   );
 
   const sendMessage = useCallback(
-    (text) => {
-      socketRef.current?.emit("send-message", { roomId, text, sender: userName, role });
-    },
-    [roomId, userName, role]
+    (text) => socketRef.current?.emit("send-message", { roomId, text }),
+    [roomId]
   );
 
   const sharePeerId = useCallback(
-    (peerId) => {
-      socketRef.current?.emit("share-peer-id", { roomId, peerId });
-    },
+    (peerId) => socketRef.current?.emit("share-peer-id", { roomId, peerId }),
     [roomId]
   );
 
-  // Tell the socket server which interviewId is active
-  // so it can record snapshots against it
   const emitSetInterviewId = useCallback(
-    (interviewId) => {
-      socketRef.current?.emit("set-interview-id", { roomId, interviewId });
-    },
+    (interviewId) => socketRef.current?.emit("set-interview-id", { roomId, interviewId }),
     [roomId]
   );
 
-  // ─── Event listener registration helpers ─────────────────────
+  // ─── Handler registration — just update the ref, no re-subscription needed ──
 
   const onCodeUpdate = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return;
-    socket.off("code-update");
-    socket.on("code-update", ({ code }) => handler(code));
+    handlersRef.current.onCodeUpdate = handler;
   }, []);
 
   const onLanguageUpdate = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return;
-    socket.off("language-update");
-    socket.on("language-update", ({ language }) => handler(language));
+    handlersRef.current.onLanguageUpdate = handler;
   }, []);
 
   const onOutputUpdate = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return;
-    socket.off("output-update");
-    socket.on("output-update", ({ output }) => handler(output));
+    handlersRef.current.onOutputUpdate = handler;
   }, []);
 
   const onPeerIdReceived = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return;
-    socket.off("peer-id-received");
-    socket.on("peer-id-received", ({ peerId }) => handler(peerId));
+    handlersRef.current.onPeerIdReceived = handler;
   }, []);
 
-  // Listen for interview-started event (so candidates can see the timer too)
   const onInterviewStarted = useCallback((handler) => {
-    const socket = socketRef.current;
-    if (!socket) return;
-    socket.off("interview-started");
-    socket.on("interview-started", ({ interviewId }) => handler(interviewId));
+    handlersRef.current.onInterviewStarted = handler;
   }, []);
 
   return {
     isConnected,
+    serverStateLost,
     users,
     messages,
+    timelineEvents,
     emitCodeChange,
     emitLanguageChange,
     emitCodeOutput,
+    emitTimelineEvent,
     sendMessage,
     sharePeerId,
     emitSetInterviewId,

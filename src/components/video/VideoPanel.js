@@ -24,12 +24,14 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
   const peerRef = useRef(null);
   const currentCallRef = useRef(null);
   const myStreamRef = useRef(null);
+  const initRunIdRef = useRef(0);
   const pendingPeerIdRef = useRef(null); // Bug 5: queue peer ID if it arrives early
 
-  // Bug 1 & 4: Mount = start, unmount = stop. No isActive needed.
+  // Mount = start, unmount = stop
   useEffect(() => {
     initializeVideo();
     return () => stopEverything();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Bug 4: Separate beforeunload effect so cleanup doesn't fire on every re-render
@@ -54,23 +56,16 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
     }
   }, [isCameraOff]);
 
-  // Bug 6: Depend on onPeerIdReceived so it re-registers when socket is ready
   useEffect(() => {
     onPeerIdReceived((peerId) => {
-      console.log("📞 Received peer ID:", peerId);
-      // Bug 2: Only call if we are not already in a call
-      if (currentCallRef.current) {
-        console.warn("Already in a call — ignoring incoming peer ID");
-        return;
-      }
-      // Bug 5: If stream not ready yet, queue the peer ID
+      if (currentCallRef.current) return;
       if (!myStreamRef.current) {
-        console.warn("Stream not ready — queuing peer ID");
         pendingPeerIdRef.current = peerId;
         return;
       }
       callPeer(peerId);
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onPeerIdReceived]);
 
   // Bug 3: Retry attaching local stream until the video ref is in the DOM
@@ -84,6 +79,9 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
   }
 
   function stopEverything() {
+    // Invalidate any pending async initializeVideo flow.
+    initRunIdRef.current += 1;
+
     if (myStreamRef.current) {
       myStreamRef.current.getTracks().forEach((t) => t.stop());
       myStreamRef.current = null;
@@ -106,6 +104,8 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
   }
 
   async function initializeVideo() {
+    const initRunId = ++initRunIdRef.current;
+
     try {
       setCallStatus("initializing");
 
@@ -115,12 +115,30 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
+      // If a newer init started (or cleanup ran), stop this stale stream immediately.
+      if (initRunId !== initRunIdRef.current) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+
+      // Defensive: stop a previous stream before replacing it.
+      if (myStreamRef.current && myStreamRef.current !== stream) {
+        myStreamRef.current.getTracks().forEach((t) => t.stop());
+      }
+
       myStreamRef.current = stream;
 
       // Bug 3: Use retry loop instead of direct ref assignment
       attachLocalStream(stream);
 
       const { default: Peer } = await import("peerjs");
+
+      // Component may have unmounted while peerjs was loading.
+      if (initRunId !== initRunIdRef.current) {
+        return;
+      }
+
       // Bug 7: Pass multiple STUN servers
       const peer = new Peer({ config: ICE_SERVERS });
       peerRef.current = peer;
@@ -176,6 +194,17 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
       console.log("🎥 Got remote stream");
       setRemoteStream(incomingStream);
       setCallStatus("connected");
+
+      // Re-attach stream whenever a track is added/replaced (e.g. camera toggle)
+      const pc = call.peerConnection;
+      if (pc) {
+        pc.ontrack = () => {
+          if (remoteVideoRef.current) {
+            remoteVideoRef.current.srcObject = incomingStream;
+            remoteVideoRef.current.play().catch(() => {});
+          }
+        };
+      }
     });
     call.on("close", () => {
       setRemoteStream(null);
@@ -186,12 +215,6 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
       console.error("Call error:", err);
       setCallStatus("error");
     });
-  }
-
-  function getSender(kind) {
-    return currentCallRef.current?.peerConnection
-      ?.getSenders()
-      ?.find((s) => s.track?.kind === kind);
   }
 
   function toggleMute() {
@@ -205,43 +228,17 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
     const stream = myStreamRef.current;
     if (!stream) return;
 
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return;
+
     if (!isCameraOff) {
-      // HIDE: stop the track so the OS releases the camera light
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.stop();
-        if (myVideoRef.current) myVideoRef.current.srcObject = null;
-        const sender = getSender("video");
-        if (sender) await sender.replaceTrack(null);
-      }
+      // Just disable the track — camera hardware stops, LED turns off immediately
+      videoTrack.enabled = false;
       setIsCameraOff(true);
     } else {
-      // SHOW: build a completely fresh stream — never reuse the stale one
-      try {
-        const newVideoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-        const newVideoTrack = newVideoStream.getVideoTracks()[0];
-
-        // Grab still-live audio tracks from the old stream
-        const audioTracks = stream.getAudioTracks();
-
-        // Brand new MediaStream — browser treats it as fresh, no stale state
-        const freshStream = new MediaStream([...audioTracks, newVideoTrack]);
-        myStreamRef.current = freshStream;
-
-        // Attach to local preview
-        if (myVideoRef.current) {
-          myVideoRef.current.srcObject = freshStream;
-          myVideoRef.current.play().catch(() => {});
-        }
-
-        // Tell the peer to use the new video track
-        const sender = getSender("video");
-        if (sender) await sender.replaceTrack(newVideoTrack);
-
-        setIsCameraOff(false);
-      } catch (err) {
-        console.error("Failed to restart camera:", err);
-      }
+      // Re-enable — camera hardware starts, LED turns on
+      videoTrack.enabled = true;
+      setIsCameraOff(false);
     }
   }
 

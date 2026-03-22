@@ -31,6 +31,7 @@ export default function ProblemsPage() {
 
   useEffect(() => {
     fetchProblems();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [difficulty, topic, search]);
 
   async function fetchUser() {

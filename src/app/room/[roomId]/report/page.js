@@ -1,54 +1,41 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
+import {
+  RadarChart, PolarGrid, PolarAngleAxis, Radar,
+  ResponsiveContainer, Tooltip,
+} from "recharts";
+import {
+  ArrowLeft, Play, Share2, Trash2, RefreshCw,
+  CheckCircle, XCircle, AlertCircle, Clock, Code2,
+  TrendingUp, Zap, Shield, ChevronRight, Copy, Check
+} from "lucide-react";
 
-const REC_STYLES = {
-  STRONG_HIRE: {
-    bg: "bg-green-900/30",
-    text: "text-green-400",
-    border: "border-green-800",
-    label: "STRONG HIRE",
-    emoji: "🌟",
-    bar: "bg-green-500",
-  },
-  HIRE: {
-    bg: "bg-blue-900/30",
-    text: "text-blue-400",
-    border: "border-blue-800",
-    label: "HIRE",
-    emoji: "✅",
-    bar: "bg-blue-500",
-  },
-  BORDERLINE: {
-    bg: "bg-yellow-900/30",
-    text: "text-yellow-400",
-    border: "border-yellow-800",
-    label: "BORDERLINE",
-    emoji: "⚠️",
-    bar: "bg-yellow-500",
-  },
-  NO_HIRE: {
-    bg: "bg-red-900/30",
-    text: "text-red-400",
-    border: "border-red-800",
-    label: "NO HIRE",
-    emoji: "❌",
-    bar: "bg-red-500",
-  },
+const clamp = (n, a, b) => Math.min(b, Math.max(a, Number(n) || 0));
+const pct10 = (n) => Math.round(clamp(n, 0, 10) * 10);
+
+const REC = {
+  STRONG_HIRE: { label: "Strong Hire", color: "text-emerald-400", bg: "bg-emerald-500/10 border-emerald-500/30", dot: "bg-emerald-400", icon: CheckCircle },
+  HIRE:        { label: "Hire",        color: "text-cyan-400",    bg: "bg-cyan-500/10 border-cyan-500/30",    dot: "bg-cyan-400",    icon: CheckCircle },
+  BORDERLINE:  { label: "Borderline",  color: "text-amber-400",   bg: "bg-amber-500/10 border-amber-500/30",  dot: "bg-amber-400",   icon: AlertCircle },
+  NO_HIRE:     { label: "No Hire",     color: "text-rose-400",    bg: "bg-rose-500/10 border-rose-500/30",    dot: "bg-rose-400",    icon: XCircle },
 };
 
-function ScoreBar({ label, score, max = 10 }) {
-  const pct = Math.round((score / max) * 100);
-  const color = pct >= 70 ? "bg-green-500" : pct >= 40 ? "bg-yellow-500" : "bg-red-500";
+function recKey(v) {
+  return (v || "BORDERLINE").toUpperCase().replace(/\s+/g, "_");
+}
 
+function ScoreBar({ label, value, color = "bg-violet-500" }) {
+  const pct = pct10(value);
   return (
-    <div className="mb-5">
+    <div>
       <div className="flex items-center justify-between mb-1.5">
-        <span className="text-sm text-gray-300">{label}</span>
-        <span className="text-sm font-bold text-white">{score}/{max}</span>
+        <span className="text-slate-400 text-sm">{label}</span>
+        <span className="text-white text-sm font-semibold">{value}/10</span>
       </div>
-      <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+      <div className="h-2 bg-white/[0.06] rounded-full overflow-hidden">
         <div
           className={`h-full ${color} rounded-full transition-all duration-700`}
           style={{ width: `${pct}%` }}
@@ -58,311 +45,450 @@ function ScoreBar({ label, score, max = 10 }) {
   );
 }
 
-function FormattedText({ text }) {
-  if (!text) return null;
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+function MetricPill({ label, value, sub }) {
   return (
-    <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
-      {parts.map((part, i) =>
-        part.startsWith("**") && part.endsWith("**") ? (
-          <strong key={i} className="text-white font-semibold">
-            {part.slice(2, -2)}
-          </strong>
-        ) : (
-          part
-        )
-      )}
-    </p>
+    <div className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4">
+      <div className="text-xs text-slate-500 uppercase tracking-widest mb-1">{label}</div>
+      <div className="text-xl font-bold text-white">{value || "—"}</div>
+      {sub && <div className="text-xs text-slate-600 mt-0.5">{sub}</div>}
+    </div>
+  );
+}
+
+function RubricSlider({ label, value, onChange }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-slate-400 text-sm">{label}</span>
+        <span className="text-violet-400 text-sm font-semibold">{value}/10</span>
+      </div>
+      <input
+        type="range" min={0} max={10} value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+        style={{ accentColor: "#8b5cf6" }}
+      />
+    </div>
   );
 }
 
 export default function ReportPage() {
   const { roomId } = useParams();
-
+  const router = useRouter();
   const [room, setRoom] = useState(null);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const [shareUrl, setShareUrl] = useState("");
+  const [sharing, setSharing] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  const [rubricSaved, setRubricSaved] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [rubric, setRubric] = useState({
+    problemSolving: 0, communication: 0, codeQuality: 0, edgeCases: 0, speed: 0,
+  });
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   async function fetchData() {
     try {
       const roomRes = await fetch(`/api/rooms/${roomId}`);
       const roomData = await roomRes.json();
-
-      if (!roomRes.ok) {
-        setError("Room not found");
-        return;
-      }
-
+      if (!roomRes.ok) { setError("Room not found"); return; }
       setRoom(roomData.room);
-
       const interviewId = roomData.room.interview?.id;
       if (interviewId) {
-        const repRes = await fetch(`/api/interviews/${interviewId}/report`);
-        if (repRes.ok) {
-          const repData = await repRes.json();
-          setReport(repData.report);
+        const reportRes = await fetch(`/api/interviews/${interviewId}/report`);
+        if (reportRes.ok) {
+          const d = await reportRes.json();
+          setReport(d.report);
+          const r = d.report;
+          if (r.rubricProblemSolving || r.rubricCommunication) {
+            setRubric({
+              problemSolving: r.rubricProblemSolving ?? 0,
+              communication:  r.rubricCommunication  ?? 0,
+              codeQuality:    r.rubricCodeQuality    ?? 0,
+              edgeCases:      r.rubricEdgeCases      ?? 0,
+              speed:          r.rubricSpeed          ?? 0,
+            });
+          }
+          if (r.shareToken) setShareUrl(`${window.location.origin}/share/${r.shareToken}`);
         }
-        // 404 just means no report yet — that's fine
       }
-    } catch {
-      setError("Failed to load data");
-    } finally {
-      setLoading(false);
-    }
+    } catch { setError("Failed to load report"); }
+    finally { setLoading(false); }
   }
 
   async function generateReport() {
     const interviewId = room?.interview?.id;
     if (!interviewId) return;
-
-    setGenerating(true);
-    setError("");
-
+    setGenerating(true); setError("");
+    const toastId = toast.loading("AI is analyzing the code...");
     try {
-      const res = await fetch(`/api/interviews/${interviewId}/report`, {
-        method: "POST",
-      });
+      const res = await fetch(`/api/interviews/${interviewId}/report`, { method: "POST" });
       const data = await res.json();
-
       if (!res.ok) {
+        toast.error(data.error || "Failed to generate report", { id: toastId });
         setError(data.error || "Failed to generate report");
         return;
       }
-
+      toast.success("Report generated!", { id: toastId });
       setReport(data.report);
     } catch {
+      toast.error("Something went wrong. Please try again.", { id: toastId });
       setError("Something went wrong. Please try again.");
-    } finally {
-      setGenerating(false);
-    }
+    } finally { setGenerating(false); }
   }
 
-  // ── Loading ──────────────────────────────────────────────────────────────
+  async function saveRubric() {
+    const interviewId = room?.interview?.id;
+    if (!interviewId) return;
+    await fetch(`/api/interviews/${interviewId}/share`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rubric }),
+    });
+    toast.success("Rubric saved");
+    setRubricSaved(true);
+    setTimeout(() => setRubricSaved(false), 2000);
+  }
+
+  async function generateShareLink() {
+    const interviewId = room?.interview?.id;
+    if (!interviewId) return;
+    setSharing(true);
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rubric }),
+      });
+      const data = await res.json();
+      if (data.shareToken) {
+        const url = `${window.location.origin}/share/${data.shareToken}`;
+        setShareUrl(url);
+        await navigator.clipboard.writeText(url).catch(() => {});
+        toast.success("Share link copied to clipboard!");
+        setCopied(true);
+        setTimeout(() => setCopied(false), 3000);
+      }
+    } finally { setSharing(false); }
+  }
+
+  async function revokeShareLink() {
+    const interviewId = room?.interview?.id;
+    if (!interviewId) return;
+    if (!confirm("Revoke this share link? Anyone with the current link will lose access.")) return;
+    setRevoking(true);
+    try {
+      await fetch(`/api/interviews/${interviewId}/share`, { method: "DELETE" });
+      setShareUrl("");
+      toast.success("Share link revoked");
+    } finally { setRevoking(false); }
+  }
+
+  async function deleteInterview() {
+    const interviewId = room?.interview?.id;
+    if (!interviewId) return;
+    if (!confirm("Delete this interview and all its data? This cannot be undone.")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}`, { method: "DELETE" });
+      if (res.ok) { toast.success("Interview deleted"); router.push("/dashboard"); }
+      else toast.error("Delete failed.");
+    } finally { setDeleting(false); }
+  }
+
+  const rec = useMemo(() => REC[recKey(report?.recommendation)] || REC.BORDERLINE, [report]);
+  const RecIcon = rec.icon;
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
-        <div className="text-gray-400 text-lg">Loading report...</div>
-      </div>
-    );
-  }
-
-  // ── Hard error (room not found etc) ─────────────────────────────────────
-  if (error && !room) {
-    return (
-      <div className="flex items-center justify-center min-h-screen bg-gray-950">
-        <div className="text-center">
-          <div className="text-6xl mb-4">📊</div>
-          <h2 className="text-xl font-semibold text-white mb-2">{error}</h2>
-          <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
-            Back to Dashboard
-          </a>
+      <div className="min-h-screen bg-[#04040f] flex items-center justify-center">
+        <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+        <div className="relative z-10 text-center">
+          <div className="w-10 h-10 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500 text-sm">Loading report...</p>
         </div>
       </div>
     );
   }
 
-  // ── No report yet — show generate prompt ────────────────────────────────
+  if (error && !room) {
+    return (
+      <div className="min-h-screen bg-[#04040f] flex items-center justify-center">
+        <div className="text-center">
+          <p className="text-slate-400 mb-4">{error}</p>
+          <a href="/dashboard" className="text-violet-400 hover:text-violet-300 text-sm">← Back to Dashboard</a>
+        </div>
+      </div>
+    );
+  }
+
+  // ── No report yet ──
   if (!report) {
     return (
-      <div className="min-h-screen bg-gray-950">
-        <div className="max-w-3xl mx-auto px-4 py-12">
-          <div className="flex items-center justify-between mb-8">
-            <div>
-              <h1 className="text-3xl font-bold text-white">AI Evaluation</h1>
-              <p className="text-gray-400 mt-1">{room?.title}</p>
-            </div>
-            <a
-              href="/dashboard"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-all border border-gray-700"
-            >
-              Dashboard
-            </a>
+      <div className="min-h-screen bg-[#04040f] text-slate-200">
+        <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+        <div className="dot-grid fixed inset-0 pointer-events-none opacity-30" />
+
+        {/* Navbar */}
+        <nav className="sticky top-0 z-50 bg-[#04040f]/80 backdrop-blur-2xl border-b border-white/[0.06]">
+          <div className="max-w-5xl mx-auto px-6 flex items-center gap-4 h-14">
+            <button onClick={() => router.push("/dashboard")} className="text-slate-500 hover:text-white transition-colors">
+              <ArrowLeft size={18} />
+            </button>
+            <span className="text-white font-semibold text-sm">{room?.title}</span>
+          </div>
+        </nav>
+
+        <div className="relative z-10 max-w-2xl mx-auto px-6 py-24 text-center">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-3xl">🤖</div>
+          <h1 className="text-3xl font-black text-white mb-3">Generate AI Report</h1>
+          <p className="text-slate-500 mb-10 leading-relaxed">
+            AI will analyze the code for correctness, complexity, edge cases, and quality — then give a hiring recommendation.
+          </p>
+
+          <div className="grid grid-cols-3 gap-3 mb-10">
+            {[
+              { label: "Problem", value: room?.problem?.title || "Free coding" },
+              { label: "Language", value: (room?.interview?.language || "—").toUpperCase() },
+              { label: "Duration", value: room?.interview?.duration ? `${Math.round(room.interview.duration / 60)}m` : "—" },
+            ].map((m, i) => (
+              <div key={i} className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4 text-left">
+                <div className="text-xs text-slate-600 uppercase tracking-widest mb-1">{m.label}</div>
+                <div className="text-white text-sm font-semibold truncate">{m.value}</div>
+              </div>
+            ))}
           </div>
 
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
-            <div className="text-6xl mb-6">🤖</div>
-            <h2 className="text-2xl font-bold text-white mb-3">
-              Ready to Generate AI Report
-            </h2>
-            <p className="text-gray-400 mb-2">
-              AI will analyze the candidate&apos;s code and generate a detailed evaluation.
-            </p>
-            <p className="text-gray-500 text-sm mb-8">
-              Includes correctness, code quality, complexity analysis, and a hiring recommendation.
-            </p>
+          {error && (
+            <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-sm">{error}</div>
+          )}
 
-            <div className="flex items-center justify-center gap-6 mb-8 flex-wrap">
-              {room?.problem && (
-                <div className="text-sm">
-                  <span className="text-gray-500">Problem: </span>
-                  <span className="text-blue-400">{room.problem.title}</span>
-                </div>
-              )}
-              <div className="text-sm">
-                <span className="text-gray-500">Language: </span>
-                <span className="text-white">{room?.interview?.language}</span>
-              </div>
-              {room?.interview?.duration && (
-                <div className="text-sm">
-                  <span className="text-gray-500">Duration: </span>
-                  <span className="text-white">
-                    {Math.round(room.interview.duration / 60)} min
-                  </span>
-                </div>
-              )}
-            </div>
-
-            {error && (
-              <div className="mb-6 p-3 bg-red-900/30 border border-red-800 rounded-lg">
-                <p className="text-red-400 text-sm">{error}</p>
-              </div>
+          <button
+            onClick={generateReport}
+            disabled={generating}
+            className="px-10 py-4 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-2xl font-bold text-lg shadow-lg shadow-violet-600/25 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2 mx-auto"
+          >
+            {generating ? (
+              <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
+            ) : (
+              <><RefreshCw size={18} /> Generate Report</>
             )}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
+  // ── Full report ──
+  return (
+    <div className="min-h-screen bg-[#04040f] text-slate-200">
+      <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+      <div className="dot-grid fixed inset-0 pointer-events-none opacity-30" />
+
+      {/* Navbar */}
+      <nav className="sticky top-0 z-50 bg-[#04040f]/80 backdrop-blur-2xl border-b border-white/[0.06]">
+        <div className="max-w-5xl mx-auto px-6 flex items-center justify-between h-14">
+          <div className="flex items-center gap-3">
+            <button onClick={() => router.push("/dashboard")} className="text-slate-500 hover:text-white transition-colors">
+              <ArrowLeft size={18} />
+            </button>
+            <span className="text-white font-semibold text-sm truncate max-w-[200px]">{room?.title}</span>
+            <span className="text-slate-700">·</span>
+            <span className="text-slate-500 text-xs">AI Report</span>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={generateReport}
-              disabled={generating}
-              className={`px-8 py-4 rounded-xl font-semibold text-lg transition-all ${
-                generating
-                  ? "bg-gray-700 text-gray-400 cursor-not-allowed"
-                  : "bg-blue-600 hover:bg-blue-700 text-white"
-              }`}
+              onClick={() => router.push(`/room/${roomId}/playback`)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-400 hover:text-white border border-white/[0.07] hover:border-white/[0.14] rounded-lg transition-all"
             >
-              {generating ? (
-                <span className="flex items-center gap-3">
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                  </svg>
-                  AI is analyzing the code...
-                </span>
-              ) : (
-                "🤖 Generate AI Report"
-              )}
+              <Play size={12} /> Playback
+            </button>
+            <button
+              onClick={deleteInterview}
+              disabled={deleting}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-500 hover:text-rose-400 border border-white/[0.07] hover:border-rose-500/30 rounded-lg transition-all disabled:opacity-40"
+            >
+              <Trash2 size={12} /> {deleting ? "Deleting…" : "Delete"}
             </button>
           </div>
         </div>
-      </div>
-    );
-  }
+      </nav>
 
-  // ── Report exists — display it ───────────────────────────────────────────
-  const rec = REC_STYLES[report.recommendation] || REC_STYLES.BORDERLINE;
+      <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-5">
 
-  return (
-    <div className="min-h-screen bg-gray-950">
-      <div className="max-w-4xl mx-auto px-4 py-12">
-
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-white">AI Evaluation Report</h1>
-            <p className="text-gray-400 mt-1">{room?.title}</p>
+        {/* ── Verdict banner ── */}
+        <div className={`flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-6 rounded-2xl border ${rec.bg}`}>
+          <div className="flex items-center gap-4">
+            <RecIcon size={36} className={rec.color} />
+            <div>
+              <p className="text-xs text-slate-500 uppercase tracking-widest mb-0.5">AI Recommendation</p>
+              <h1 className={`text-3xl font-black ${rec.color}`}>{rec.label}</h1>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
-            <a
-              href={`/room/${roomId}/playback`}
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-all border border-gray-700"
-            >
-              🎬 Playback
-            </a>
-            <a
-              href="/dashboard"
-              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-all border border-gray-700"
-            >
-              Dashboard
-            </a>
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-center px-5 py-3 bg-black/20 rounded-xl">
+              <div className="text-2xl font-black text-white">{clamp(report.overallScore, 0, 100)}</div>
+              <div className="text-xs text-slate-500">Overall Score</div>
+            </div>
+            <div className="text-center px-5 py-3 bg-black/20 rounded-xl">
+              <div className="text-lg font-bold text-white font-mono">{report.timeComplexity || "—"}</div>
+              <div className="text-xs text-slate-500">Time</div>
+            </div>
+            <div className="text-center px-5 py-3 bg-black/20 rounded-xl">
+              <div className="text-lg font-bold text-white font-mono">{report.spaceComplexity || "—"}</div>
+              <div className="text-xs text-slate-500">Space</div>
+            </div>
           </div>
         </div>
 
-        {/* Recommendation Banner */}
-        <div className={`${rec.bg} ${rec.border} border rounded-xl p-8 mb-8 text-center`}>
-          <div className="text-5xl mb-3">{rec.emoji}</div>
-          <h2 className={`text-3xl font-bold ${rec.text} mb-2`}>{rec.label}</h2>
-          <div className="flex items-center justify-center gap-2 mt-3">
-            <div className="w-48 h-2 bg-gray-700 rounded-full overflow-hidden">
-              <div
-                className={`h-full ${rec.bar} rounded-full transition-all duration-1000`}
-                style={{ width: `${report.overallScore}%` }}
-              />
-            </div>
-            <span className="text-gray-300 text-sm font-medium">
-              {report.overallScore}/100
-            </span>
-          </div>
-        </div>
+        {/* ── 2-col grid ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-          {/* Scores */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-6">Scores</h3>
-            <ScoreBar label="Correctness" score={report.correctness} />
-            <ScoreBar label="Code Quality" score={report.codeQuality} />
-            <ScoreBar label="Edge Case Handling" score={report.edgeCaseHandling} />
-            <ScoreBar label="Overall Score" score={report.overallScore} max={100} />
-          </div>
+          {/* Left col — scores + summary */}
+          <div className="lg:col-span-2 space-y-5">
 
-          {/* Complexity + Meta */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-6">Complexity Analysis</h3>
-            <div className="space-y-4 mb-6">
-              <div className="bg-gray-800 rounded-lg p-4">
-                <span className="text-gray-400 text-xs uppercase tracking-wide">Time Complexity</span>
-                <p className="text-2xl font-bold text-white mt-1 font-mono">{report.timeComplexity}</p>
-              </div>
-              <div className="bg-gray-800 rounded-lg p-4">
-                <span className="text-gray-400 text-xs uppercase tracking-wide">Space Complexity</span>
-                <p className="text-2xl font-bold text-white mt-1 font-mono">{report.spaceComplexity}</p>
-              </div>
+            {/* Score radar + bars */}
+            <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-6 space-y-4">
+              <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                <TrendingUp size={15} className="text-violet-400" /> Performance Breakdown
+              </h2>
+              <ResponsiveContainer width="100%" height={200}>
+                <RadarChart data={[
+                  { subject: "Correctness",  score: clamp(report.correctness, 0, 10) },
+                  { subject: "Code Quality", score: clamp(report.codeQuality, 0, 10) },
+                  { subject: "Edge Cases",   score: clamp(report.edgeCaseHandling, 0, 10) },
+                ]}>
+                  <PolarGrid stroke="rgba(255,255,255,0.06)" />
+                  <PolarAngleAxis dataKey="subject" tick={{ fill: "#64748b", fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ background: "rgba(10,8,24,0.95)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, color: "white", fontSize: 12 }}
+                    formatter={(v) => [`${v}/10`]}
+                  />
+                  <Radar dataKey="score" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.18} dot={{ fill: "#8b5cf6", r: 3 }} />
+                </RadarChart>
+              </ResponsiveContainer>
+              <ScoreBar label="Correctness"       value={report.correctness}      color="bg-emerald-500" />
+              <ScoreBar label="Code Quality"      value={report.codeQuality}      color="bg-violet-500" />
+              <ScoreBar label="Edge Case Handling" value={report.edgeCaseHandling} color="bg-cyan-500" />
             </div>
 
-            <div className="space-y-2 text-sm border-t border-gray-800 pt-4">
-              {room?.problem && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Problem</span>
-                  <span className="text-blue-400">{room.problem.title}</span>
+            {/* Summary */}
+            {report.summary && (
+              <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-6">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
+                  <Zap size={15} className="text-cyan-400" /> Summary
+                </h2>
+                <p className="text-slate-400 text-sm leading-relaxed">{report.summary}</p>
+              </div>
+            )}
+
+            {/* Improvements */}
+            {report.improvements && (
+              <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-6">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2 mb-3">
+                  <ChevronRight size={15} className="text-amber-400" /> Areas to Improve
+                </h2>
+                <p className="text-slate-400 text-sm leading-relaxed">{report.improvements}</p>
+              </div>
+            )}
+
+            {/* Code snapshot */}
+            <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-white/[0.06]">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Code2 size={15} className="text-slate-400" /> Final Code
+                </h2>
+                <span className="text-xs text-slate-600 font-mono">{room?.interview?.language}</span>
+              </div>
+              <pre className="p-5 overflow-x-auto max-h-72 text-xs text-emerald-300 font-mono leading-relaxed">
+                <code>{room?.interview?.finalCode || "No code submitted."}</code>
+              </pre>
+            </div>
+          </div>
+
+          {/* Right col */}
+          <div className="space-y-5">
+
+            {/* Session info */}
+            <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+              <h2 className="text-sm font-semibold text-white mb-1">Session Info</h2>
+              <MetricPill label="Problem"  value={room?.problem?.title || "Free coding"} />
+              <MetricPill label="Language" value={(room?.interview?.language || "—").toUpperCase()} />
+              <MetricPill label="Duration" value={room?.interview?.duration ? `${Math.round(room.interview.duration / 60)}m` : "—"} />
+            </div>
+
+            {/* Interviewer rubric */}
+            <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+                  <Shield size={14} className="text-violet-400" /> Your Rubric
+                </h2>
+                <button
+                  onClick={saveRubric}
+                  className={`text-xs px-3 py-1 rounded-lg border transition-all ${
+                    rubricSaved
+                      ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
+                      : "border-white/[0.08] text-slate-400 hover:text-white hover:border-white/[0.16]"
+                  }`}
+                >
+                  {rubricSaved ? <><Check size={11} className="inline mr-1" />Saved</> : "Save"}
+                </button>
+              </div>
+              {[
+                { key: "problemSolving", label: "Problem Solving" },
+                { key: "communication",  label: "Communication" },
+                { key: "codeQuality",    label: "Code Quality" },
+                { key: "edgeCases",      label: "Edge Cases" },
+                { key: "speed",          label: "Speed" },
+              ].map(({ key, label }) => (
+                <RubricSlider
+                  key={key}
+                  label={label}
+                  value={rubric[key]}
+                  onChange={(v) => setRubric((p) => ({ ...p, [key]: v }))}
+                />
+              ))}
+            </div>
+
+            {/* Share */}
+            <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-5 space-y-3">
+              <h2 className="text-sm font-semibold text-white">Share Report</h2>
+              <button
+                onClick={generateShareLink}
+                disabled={sharing}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
+              >
+                {copied ? <><Check size={15} /> Copied!</> : sharing ? "Generating…" : <><Share2 size={15} /> Generate Share Link</>}
+              </button>
+              {shareUrl && (
+                <div className="flex items-center gap-2 p-3 bg-white/[0.03] border border-white/[0.06] rounded-xl">
+                  <span className="text-xs text-slate-500 flex-1 truncate">{shareUrl}</span>
+                  <button
+                    onClick={revokeShareLink}
+                    disabled={revoking}
+                    className="text-xs text-rose-400 hover:text-rose-300 flex-shrink-0 disabled:opacity-40"
+                  >
+                    {revoking ? "…" : "Revoke"}
+                  </button>
                 </div>
               )}
-              <div className="flex justify-between">
-                <span className="text-gray-500">Language</span>
-                <span className="text-white capitalize">{room?.interview?.language}</span>
-              </div>
-              {room?.interview?.duration && (
-                <div className="flex justify-between">
-                  <span className="text-gray-500">Duration</span>
-                  <span className="text-white">{Math.round(room.interview.duration / 60)} min</span>
-                </div>
-              )}
             </div>
+
+            {/* Delete */}
+            <button
+              onClick={deleteInterview}
+              disabled={deleting}
+              className="w-full flex items-center justify-center gap-2 py-3 bg-rose-500/10 hover:bg-rose-500/15 border border-rose-500/20 hover:border-rose-500/40 text-rose-400 rounded-xl font-semibold text-sm transition-all disabled:opacity-40"
+            >
+              <Trash2 size={15} /> {deleting ? "Deleting…" : "Delete Interview"}
+            </button>
           </div>
         </div>
-
-        {/* Detailed Analysis */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold text-white mb-4">📋 Detailed Analysis</h3>
-          <FormattedText text={report.summary} />
-        </div>
-
-        {/* Improvements */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
-          <h3 className="text-lg font-semibold text-white mb-4">💡 Suggested Improvements</h3>
-          <FormattedText text={report.improvements} />
-        </div>
-
-        {/* Submitted Code */}
-        {room?.interview?.finalCode && (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h3 className="text-lg font-semibold text-white mb-4">📝 Submitted Code</h3>
-            <pre className="bg-gray-800 p-4 rounded-lg text-green-300 text-sm overflow-x-auto leading-relaxed">
-              <code>{room.interview.finalCode}</code>
-            </pre>
-          </div>
-        )}
       </div>
     </div>
   );

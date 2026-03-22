@@ -26,6 +26,7 @@ model Room {
   status        String   @default("waiting")
   language      String   @default("javascript")
   candidateName String?
+  joinToken     String   @unique @default(cuid())
   createdAt     DateTime @default(now())
 
   createdById String
@@ -69,6 +70,7 @@ model Interview {
   room   Room   @relation(fields: [roomId], references: [id])
 
   snapshots CodeSnapshot[]
+  events    InterviewEvent[]
   notes     InterviewerNote[]
   report    AIReport?
 
@@ -84,6 +86,18 @@ model CodeSnapshot {
   interview   Interview @relation(fields: [interviewId], references: [id])
 
   @@map("code_snapshots")
+}
+
+model InterviewEvent {
+  id        String   @id @default(cuid())
+  type      String
+  label     String
+  timestamp DateTime @default(now())
+
+  interviewId String
+  interview   Interview @relation(fields: [interviewId], references: [id])
+
+  @@map("interview_events")
 }
 
 model InterviewerNote {
@@ -108,6 +122,15 @@ model AIReport {
   recommendation   String
   summary          String    @db.Text
   improvements     String    @db.Text
+  shareToken            String?   @unique
+  shareTokenExpiresAt   DateTime?
+  shareTokenRevokedAt   DateTime?
+  // Interviewer rubric scores (0–10)
+  rubricProblemSolving  Int @default(0)
+  rubricCommunication   Int @default(0)
+  rubricCodeQuality     Int @default(0)
+  rubricEdgeCases       Int @default(0)
+  rubricSpeed           Int @default(0)
   createdAt        DateTime @default(now())
 
   interviewId String    @unique

@@ -1,3 +1,4 @@
+import "@/lib/validateEnv";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";

@@ -1,16 +1,34 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export default function NotesPanel({ roomId }) {
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
   const [lastSaved, setLastSaved] = useState(null);
+  const initialLoadRef = useRef(true);
 
+  // Load the single persisted note on mount
   useEffect(() => {
-    if (!notes) return;
+    async function loadNotes() {
+      try {
+        const res = await fetch(`/api/rooms/${roomId}/notes`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.note?.content) setNotes(data.note.content);
+        }
+      } catch {}
+      initialLoadRef.current = false;
+    }
+    loadNotes();
+  }, [roomId]);
+
+  // Auto-save 3s after last keystroke, skip the initial load
+  useEffect(() => {
+    if (initialLoadRef.current) return;
     const timer = setTimeout(() => saveNotes(), 3000);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [notes]);
 
   async function saveNotes() {

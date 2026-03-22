@@ -10,6 +10,7 @@ export async function evaluateCode({
   problemTitle,
   problemDescription,
   duration,
+  testResults,
 }) {
   const prompt = buildEvaluationPrompt({
     code,
@@ -17,6 +18,7 @@ export async function evaluateCode({
     problemTitle,
     problemDescription,
     duration,
+    testResults,
   });
 
   try {
@@ -57,15 +59,20 @@ function buildEvaluationPrompt({
   problemTitle,
   problemDescription,
   duration,
+  testResults,
 }) {
   const durationMinutes = duration ? Math.round(duration / 60) : "unknown";
+
+  const testSection = testResults
+    ? `\n## Test Results (from automated runner)\nPassed: ${testResults.passed}/${testResults.total}\n${testResults.results?.map((r, i) => `Test ${i+1}: ${r.passed ? "PASSED" : `FAILED — expected ${JSON.stringify(r.expected)}, got ${r.actual}`}`).join("\n") || ""}\n\nIMPORTANT: The automated test results above are ground truth. Base your correctness score primarily on these results, not your own interpretation of the code.`
+    : "";
 
   return `
 Evaluate this coding interview submission.
 
 ## Problem
 Title: ${problemTitle || "Free coding (no specific problem)"}
-${problemDescription ? `Description:\n${problemDescription}` : ""}
+${problemDescription ? `Description:\n${problemDescription}` : ""}${testSection}
 
 ## Submission
 Language: ${language}

@@ -1,0 +1,8 @@
+# Sandbox image for TypeScript execution.
+# tsx is pre-installed so the container works with --network none.
+#
+# Build once before starting the server:
+#   docker build -t codroom-ts -f Dockerfile.ts .
+#
+FROM node:20-alpine
+RUN npm install -g tsx --prefer-offline

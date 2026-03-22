@@ -1,49 +1,54 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
-import { getCurrentUser } from "@/lib/auth";
+import { requireRoomOwner, withAuthz } from "@/lib/authz";
 
-export async function POST(request, { params }) {
-  try {
-    const user = await getCurrentUser();
-    if (!user) {
-      return NextResponse.json(
-        { error: "Not authenticated" },
-        { status: 401 }
-      );
-    }
+export const GET = withAuthz(async (request, { params }) => {
+  const { roomId } = await params;
+  const { room } = await requireRoomOwner(roomId);
 
-    const { roomId } = await params;
-    const body = await request.json();
-    const { content } = body;
+  const note = await prisma.interviewerNote.findFirst({
+    where: room.interview?.id ? { interviewId: room.interview.id } : { id: "__none__" },
+    orderBy: { createdAt: "desc" },
+  });
 
-    // Find or create interview for this room
-    let interview = await prisma.interview.findUnique({
-      where: { roomId },
-    });
+  return NextResponse.json({ note: note ?? null }, { status: 200 });
+});
 
-    if (!interview) {
-      interview = await prisma.interview.create({
-        data: {
-          roomId,
-          language: "javascript",
-        },
-      });
-    }
+export const POST = withAuthz(async (request, { params }) => {
+  const { roomId } = await params;
+  await requireRoomOwner(roomId);
 
-    // Create note
-    const note = await prisma.interviewerNote.create({
-      data: {
-        content,
-        interviewId: interview.id,
-      },
-    });
+  const body = await request.json().catch(() => ({}));
+  const { content } = body;
 
-    return NextResponse.json({ note }, { status: 201 });
-  } catch (error) {
-    console.error("Save note error:", error);
-    return NextResponse.json(
-      { error: "Failed to save note" },
-      { status: 500 }
-    );
+  if (typeof content !== "string") {
+    return NextResponse.json({ error: "content must be a string" }, { status: 400 });
   }
-}
+
+  // Find or create interview for this room
+  let interview = await prisma.interview.findUnique({ where: { roomId } });
+  if (!interview) {
+    interview = await prisma.interview.create({
+      data: { roomId, language: "javascript" },
+    });
+  }
+
+  // Upsert: update the existing note if one exists, otherwise create it
+  const existing = await prisma.interviewerNote.findFirst({
+    where: { interviewId: interview.id },
+    orderBy: { createdAt: "desc" },
+  });
+
+  const note = existing
+    ? await prisma.interviewerNote.update({
+        where: { id: existing.id },
+        data: { content: content.trim() },
+      })
+    : content.trim()
+      ? await prisma.interviewerNote.create({
+          data: { content: content.trim(), interviewId: interview.id },
+        })
+      : null;
+
+  return NextResponse.json({ note }, { status: 200 });
+});

@@ -1,42 +1,73 @@
 import { NextResponse } from "next/server";
+import { jwtVerify } from "jose";
 import prisma from "@/lib/db";
+import { withAuthz } from "@/lib/authz";
+import { getCurrentUser } from "@/lib/auth";
 
-export async function GET(request, { params }) {
-  try {
-    const { roomId } = await params;
+const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
-    const room = await prisma.room.findUnique({
-      where: { id: roomId },
-      include: {
-        createdBy: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-        problem: true,
-        interview: {
-          include: {
-            report: true,
-          },
-        },
-      },
-    });
+export const GET = withAuthz(async (request, { params }) => {
+  const { roomId } = await params;
 
-    if (!room) {
-      return NextResponse.json(
-        { error: "Room not found" },
-        { status: 404 }
-      );
-    }
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    include: {
+      createdBy: { select: { id: true, name: true, email: true } },
+      problem: true,
+      interview: { include: { report: true } },
+    },
+  });
 
+  if (!room) {
+    return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  }
+
+  // Check if the caller is the room owner (requires a valid auth cookie)
+  const user = await getCurrentUser();
+  const isOwner = user && room.createdById === user.userId;
+
+  if (isOwner) {
     return NextResponse.json({ room }, { status: 200 });
-  } catch (error) {
-    console.error("Get room error:", error);
+  }
+
+  // Non-owner path: must have a valid signed room-session ticket (issued by /join)
+  const ticketCookie = request.cookies.get(`room-ticket-${roomId}`)?.value;
+
+  if (!ticketCookie) {
     return NextResponse.json(
-      { error: "Something went wrong" },
-      { status: 500 }
+      { error: "No room access ticket — use your invite link" },
+      { status: 403 }
     );
   }
-}
+
+  try {
+    const { payload } = await jwtVerify(ticketCookie, SECRET);
+    if (payload.roomId !== roomId || payload.type !== "room-session") throw new Error();
+  } catch {
+    return NextResponse.json({ error: "Invalid or expired room ticket" }, { status: 403 });
+  }
+
+  // Strip expected test case outputs so candidates cannot read answers
+  const sanitizedProblem = room.problem
+    ? {
+        ...room.problem,
+        testCases: (room.problem.testCases || []).map(({ input }) => ({ input })),
+      }
+    : null;
+
+  return NextResponse.json(
+    {
+      room: {
+        id: room.id,
+        title: room.title,
+        status: room.status,
+        language: room.language,
+        problem: sanitizedProblem,
+        interview: room.interview
+          ? { id: room.interview.id, status: room.interview.status, language: room.interview.language }
+          : null,
+      },
+    },
+    { status: 200 }
+  );
+});

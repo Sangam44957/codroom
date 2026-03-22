@@ -2,118 +2,82 @@
 
 import { useState } from "react";
 import Editor from "@monaco-editor/react";
+import { ChevronDown } from "lucide-react";
 
 const LANGUAGE_CONFIG = {
-  javascript: {
-    label: "JavaScript",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\nfunction solution() {\n  \n}\n`,
-  },
-  python: {
-    label: "Python",
-    defaultCode: `# Welcome to CodRoom\n# Start coding here\n\ndef solution():\n    pass\n`,
-  },
-  java: {
-    label: "Java",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\npublic class Solution {\n    public static void main(String[] args) {\n        \n    }\n}\n`,
-  },
-  cpp: {
-    label: "C++",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n`,
-  },
-  csharp: {
-    label: "C#",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\nusing System;\n\nclass Solution {\n    static void Main() {\n        \n    }\n}\n`,
-  },
-  go: {
-    label: "Go",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello")\n}\n`,
-  },
-  rust: {
-    label: "Rust",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\nfn main() {\n    \n}\n`,
-  },
-  typescript: {
-    label: "TypeScript",
-    defaultCode: `// Welcome to CodRoom\n// Start coding here\n\nfunction solution(): void {\n  \n}\n`,
-  },
+  javascript: { label: "JavaScript",  defaultCode: `// Welcome to CodRoom\n\nfunction solution() {\n  \n}\n` },
+  typescript: { label: "TypeScript",  defaultCode: `// Welcome to CodRoom\n\nfunction solution(): void {\n  \n}\n` },
+  python:     { label: "Python",      defaultCode: `# Welcome to CodRoom\n\ndef solution():\n    pass\n` },
+  java:       { label: "Java",        defaultCode: `// Welcome to CodRoom\n\npublic class Solution {\n    public static void main(String[] args) {\n        \n    }\n}\n` },
+  cpp:        { label: "C++",         defaultCode: `// Welcome to CodRoom\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n` },
+  csharp:     { label: "C#",          defaultCode: `// Welcome to CodRoom\n\nusing System;\n\nclass Solution {\n    static void Main() {\n        \n    }\n}\n` },
+  go:         { label: "Go",          defaultCode: `// Welcome to CodRoom\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello")\n}\n` },
+  rust:       { label: "Rust",        defaultCode: `// Welcome to CodRoom\n\nfn main() {\n    \n}\n` },
 };
 
-export default function CodeEditor({
-  language = "javascript",
-  onLanguageChange,
-  code,
-  onCodeChange,
-}) {
+const LANG_COLORS = {
+  javascript: "#f7df1e", typescript: "#3178c6", python: "#3572A5",
+  java: "#b07219", cpp: "#f34b7d", csharp: "#178600",
+  go: "#00ADD8", rust: "#dea584",
+};
+
+export default function CodeEditor({ language = "javascript", onLanguageChange, code, onCodeChange }) {
   const [editorReady, setEditorReady] = useState(false);
 
-  function getMonacoLanguage(lang) {
-    const map = {
-      javascript: "javascript",
-      python: "python",
-      java: "java",
-      cpp: "cpp",
-      csharp: "csharp",
-      go: "go",
-      rust: "rust",
-      typescript: "typescript",
-    };
-    return map[lang] || "javascript";
-  }
-
-  function handleEditorMount() {
-    setEditorReady(true);
-  }
-
-  function handleLanguageChange(e) {
-    const newLang = e.target.value;
-    onLanguageChange(newLang);
-    onCodeChange(LANGUAGE_CONFIG[newLang]?.defaultCode || "");
-  }
+  const langColor = LANG_COLORS[language] || "#888";
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
-        <div className="flex items-center gap-3">
-          <label className="text-sm text-gray-400">Language:</label>
-          <select
-            value={language}
-            onChange={handleLanguageChange}
-            className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-md text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            {Object.entries(LANGUAGE_CONFIG).map(([key, config]) => (
-              <option key={key} value={key}>
-                {config.label}
-              </option>
-            ))}
-          </select>
+    <div className="flex flex-col h-full bg-[#0d0d18]">
+      {/* Editor tab bar — VS Code style */}
+      <div className="flex items-center justify-between px-3 h-9 bg-[#111118] border-b border-white/[0.06] flex-shrink-0">
+        {/* Active file tab */}
+        <div className="flex items-center gap-0">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0d0d18] border-t border-l border-r border-white/[0.07] rounded-t text-xs text-slate-300 -mb-px">
+            <span style={{ color: langColor }} className="text-[10px]">●</span>
+            solution.{language === "python" ? "py" : language === "java" ? "java" : language === "cpp" ? "cpp" : language === "csharp" ? "cs" : language === "go" ? "go" : language === "rust" ? "rs" : language === "typescript" ? "ts" : "js"}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {editorReady ? (
-            <span className="text-green-400 text-xs flex items-center gap-1">
-              ● Editor Ready
-            </span>
-          ) : (
-            <span className="text-yellow-400 text-xs flex items-center gap-1">
-              ● Loading Editor...
-            </span>
-          )}
+
+        {/* Language selector + status */}
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <select
+              value={language}
+              onChange={(e) => onLanguageChange(e.target.value)}
+              className="appearance-none pl-2 pr-6 py-1 bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.14] rounded text-xs text-slate-300 focus:outline-none focus:ring-1 focus:ring-violet-500/40 cursor-pointer transition-all"
+            >
+              {Object.entries(LANGUAGE_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key} className="bg-[#111118]">{cfg.label}</option>
+              ))}
+            </select>
+            <ChevronDown size={10} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+          </div>
+
+          <span className={`text-[10px] flex items-center gap-1 ${editorReady ? "text-emerald-500" : "text-amber-500"}`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-dot" />
+            {editorReady ? "Ready" : "Loading"}
+          </span>
         </div>
       </div>
-      <div className="flex-1">
+
+      {/* Monaco */}
+      <div className="flex-1 min-h-0">
         <Editor
           height="100%"
-          language={getMonacoLanguage(language)}
+          language={language === "cpp" ? "cpp" : language === "csharp" ? "csharp" : language}
           value={code}
-          onChange={(value) => onCodeChange(value || "")}
-          onMount={handleEditorMount}
+          onChange={(v) => onCodeChange(v || "")}
+          onMount={() => setEditorReady(true)}
           theme="vs-dark"
           options={{
-            fontSize: 14,
-            fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
+            fontSize: 13,
+            fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace",
+            fontLigatures: true,
             minimap: { enabled: false },
             scrollBeyondLastLine: false,
-            padding: { top: 16 },
+            padding: { top: 12, bottom: 12 },
             lineNumbers: "on",
+            lineNumbersMinChars: 3,
             roundedSelection: true,
             automaticLayout: true,
             tabSize: 2,
@@ -124,6 +88,8 @@ export default function CodeEditor({
             cursorBlinking: "smooth",
             cursorSmoothCaretAnimation: "on",
             smoothScrolling: true,
+            renderLineHighlight: "line",
+            scrollbar: { verticalScrollbarSize: 4, horizontalScrollbarSize: 4 },
           }}
         />
       </div>
