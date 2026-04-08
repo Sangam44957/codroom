@@ -9,7 +9,9 @@
     "kill:ports": "npx kill-port 3000 3001",
     "start:clean": "npm run kill:ports && npm run dev:all",
     "build": "next build",
+    "build:all": "prisma generate && next build",
     "start": "next start",
+    "start:all": "concurrently -k -r -n NEXT,SOCKET -c cyan,yellow \"npm run start\" \"npm run dev:socket\"",
     "lint": "eslint src --ext .js,.jsx",
     "test": "jest",
     "seed": "node prisma/seed.js"

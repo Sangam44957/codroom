@@ -1,9 +1,28 @@
 "use client";
 
 import { motion, AnimatePresence } from "framer-motion";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Lock } from "lucide-react";
 
-export default function SecurityWarning({ warningCount, onDismiss }) {
+export default function SecurityWarning({ warningCount, isLocked, onDismiss }) {
+  // Hard lock screen — replaces the entire UI
+  if (isLocked) {
+    return (
+      <div className="fixed inset-0 z-[9999] bg-[#04040f] flex items-center justify-center">
+        <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+        <div className="relative z-10 text-center max-w-sm px-6">
+          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center">
+            <Lock size={28} className="text-rose-400" />
+          </div>
+          <h1 className="text-2xl font-black text-white mb-3">Session Locked</h1>
+          <p className="text-slate-400 text-sm leading-relaxed">
+            Too many security violations were detected. Your session has been locked and the interviewer has been notified.
+          </p>
+          <p className="text-slate-600 text-xs mt-4">{warningCount} violations recorded</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <AnimatePresence>
       {warningCount > 0 && (
@@ -18,7 +37,6 @@ export default function SecurityWarning({ warningCount, onDismiss }) {
             className="relative rounded-2xl border border-rose-500/25 bg-[#0d0b1a]/90 px-5 py-4 shadow-2xl shadow-black/60"
             style={{ backdropFilter: "blur(24px)" }}
           >
-            {/* top accent line */}
             <div className="absolute inset-x-0 top-0 h-px rounded-t-2xl bg-gradient-to-r from-transparent via-rose-500/60 to-transparent" />
 
             <div className="flex items-start gap-3">
@@ -27,9 +45,7 @@ export default function SecurityWarning({ warningCount, onDismiss }) {
               </div>
 
               <div className="flex-1 min-w-0">
-                <p className="text-rose-300 font-bold text-sm">
-                  Warning #{warningCount}
-                </p>
+                <p className="text-rose-300 font-bold text-sm">Warning #{warningCount}</p>
                 <p className="text-slate-400 text-xs mt-1 leading-relaxed">
                   Suspicious activity detected. The interviewer has been notified.
                   Stay on this tab and keep fullscreen mode active.
@@ -41,13 +57,6 @@ export default function SecurityWarning({ warningCount, onDismiss }) {
                   I understand
                 </button>
               </div>
-
-              <button
-                onClick={onDismiss}
-                className="flex-shrink-0 text-slate-600 hover:text-slate-300 transition-colors mt-0.5"
-              >
-                <X size={14} />
-              </button>
             </div>
           </div>
         </motion.div>

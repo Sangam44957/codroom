@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useRef, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight } from "lucide-react";
@@ -51,12 +51,20 @@ function MatrixRain() {
   return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full opacity-60" />;
 }
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [formData, setFormData] = useState({ email: "", password: "" });
   const [errors, setErrors] = useState({});
   const [apiError, setApiError] = useState("");
+  const [successMsg, setSuccessMsg] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("verified") === "1") {
+      setSuccessMsg("Email verified! You can now sign in.");
+    }
+  }, [searchParams]);
 
   function handleChange(field) {
     return (e) => {
@@ -86,8 +94,16 @@ export default function LoginPage() {
         body: JSON.stringify(formData),
       });
       const data = await res.json();
-      if (!res.ok) { setApiError(data.error); return; }
-      router.push("/dashboard");
+      if (!res.ok) {
+        if (data.needsVerification) {
+          router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+          return;
+        }
+        setApiError(data.error);
+        return;
+      }
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.push(next && next.startsWith("/") ? next : "/dashboard");
     } catch {
       setApiError("Something went wrong. Please try again.");
     } finally {
@@ -179,6 +195,12 @@ export default function LoginPage() {
           >
             <div className="bg-[#04040f] rounded-2xl p-8 border border-violet-500/10">
               <form onSubmit={handleSubmit} className="space-y-1">
+                {successMsg && (
+                  <div className="mb-5 p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                    <p className="text-emerald-400 text-sm">{successMsg}</p>
+                  </div>
+                )}
+
                 {/* Email */}
                 <div className="mb-5">
                   <label className="block text-sm font-medium text-slate-300 mb-2">Email</label>
@@ -200,8 +222,13 @@ export default function LoginPage() {
                 </div>
 
                 {/* Password */}
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-slate-300 mb-2">Password</label>
+                <div className="mb-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-sm font-medium text-slate-300">Password</label>
+                    <Link href="/forgot-password" className="text-xs text-violet-400 hover:text-violet-300 transition-colors">
+                      Forgot password?
+                    </Link>
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-600" size={16} />
                     <input
@@ -255,5 +282,13 @@ export default function LoginPage() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex min-h-screen bg-[#04040f]" />}>
+      <LoginInner />
+    </Suspense>
   );
 }

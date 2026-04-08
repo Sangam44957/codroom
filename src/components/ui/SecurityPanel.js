@@ -7,6 +7,7 @@ const VIOLATION_META = {
   window_blur:     { label: "Window Blur",      icon: Eye,       color: "text-amber-400",  bg: "bg-amber-500/10  border-amber-500/20"  },
   fullscreen_exit: { label: "Left Fullscreen",  icon: Monitor,   color: "text-orange-400", bg: "bg-orange-500/10 border-orange-500/20" },
   paste_detected:  { label: "Code Pasted",      icon: Clipboard, color: "text-rose-400",   bg: "bg-rose-500/10   border-rose-500/20"   },
+  copy_detected:   { label: "Code Copied",      icon: Clipboard, color: "text-rose-400",   bg: "bg-rose-500/10   border-rose-500/20"   },
   right_click:     { label: "Right Click",      icon: Mouse,     color: "text-slate-400",  bg: "bg-white/[0.04]  border-white/[0.08]"  },
   alt_tab:         { label: "Alt+Tab",          icon: Keyboard,  color: "text-amber-400",  bg: "bg-amber-500/10  border-amber-500/20"  },
   devtools:        { label: "DevTools Attempt", icon: Wrench,    color: "text-rose-400",   bg: "bg-rose-500/10   border-rose-500/20"   },

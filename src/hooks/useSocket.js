@@ -22,6 +22,10 @@ export default function useSocket(roomId, userName, role) {
     onOutputUpdate: null,
     onPeerIdReceived: null,
     onInterviewStarted: null,
+    onFocusModeChanged: null,
+    onWhiteboardDraw: null,
+    onWhiteboardClear: null,
+    onRemoteCameraToggle: null,
   });
 
   useEffect(() => {
@@ -30,8 +34,10 @@ export default function useSocket(roomId, userName, role) {
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
     const socket = io(socketUrl, {
       transports: ["websocket"],
-      reconnectionAttempts: 10,
+      reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
+      reconnectionDelayMax: 15000,
+      timeout: 10000,
     });
 
     socketRef.current = socket;
@@ -47,24 +53,32 @@ export default function useSocket(roomId, userName, role) {
 
     socket.on("disconnect", () => setIsConnected(false));
 
-    socket.on("room-state", ({ users, messages, interviewId, events, isEmptyRoom }) => {
+    socket.on("room-state", ({ code, language, users, messages, interviewId, events, focusMode, isEmptyRoom }) => {
       setUsers(users || []);
       setMessages(messages?.slice(-MAX_MESSAGES) || []);
       setTimelineEvents(events || []);
 
-      // Show "State lost" only when a reconnect happened and the server reports
-      // an effectively empty room state.
       if (reconnectDetectedRef.current && isEmptyRoom) {
         setServerStateLost(true);
       } else {
-        // Clear stale warning once real state is available again.
         setServerStateLost(false);
         reconnectDetectedRef.current = false;
       }
 
+      if (reconnectDetectedRef.current) {
+        if (code !== undefined) handlersRef.current.onCodeUpdate?.(code);
+        if (language !== undefined) handlersRef.current.onLanguageUpdate?.(language);
+      }
+
+      if (typeof focusMode === "boolean") handlersRef.current.onFocusModeChanged?.(focusMode);
+
       if (interviewId && handlersRef.current.onInterviewStarted) {
         handlersRef.current.onInterviewStarted(interviewId);
       }
+    });
+
+    socket.on("focus-mode-changed", ({ enabled }) => {
+      handlersRef.current.onFocusModeChanged?.(enabled);
     });
 
     socket.on("user-joined", ({ users }) => setUsers(users || []));
@@ -96,6 +110,16 @@ export default function useSocket(roomId, userName, role) {
     });
     socket.on("interview-started", ({ interviewId }) => {
       handlersRef.current.onInterviewStarted?.(interviewId);
+    });
+    socket.on("whiteboard-draw", ({ stroke }) => {
+      handlersRef.current.onWhiteboardDraw?.(stroke);
+    });
+    socket.on("whiteboard-clear", () => {
+      handlersRef.current.onWhiteboardClear?.();
+    });
+
+    socket.on("remote-camera-toggle", ({ isOff }) => {
+      handlersRef.current.onRemoteCameraToggle?.(isOff);
     });
 
     return () => {
@@ -133,6 +157,16 @@ export default function useSocket(roomId, userName, role) {
     [roomId]
   );
 
+  const emitWhiteboardDraw = useCallback(
+    (stroke) => socketRef.current?.emit("whiteboard-draw", { roomId, stroke }),
+    [roomId]
+  );
+
+  const emitWhiteboardClear = useCallback(
+    () => socketRef.current?.emit("whiteboard-clear", { roomId }),
+    [roomId]
+  );
+
   const sendMessage = useCallback(
     (text) => socketRef.current?.emit("send-message", { roomId, text }),
     [roomId]
@@ -145,6 +179,16 @@ export default function useSocket(roomId, userName, role) {
 
   const emitSetInterviewId = useCallback(
     (interviewId) => socketRef.current?.emit("set-interview-id", { roomId, interviewId }),
+    [roomId]
+  );
+
+  const emitCameraToggle = useCallback(
+    (isOff) => socketRef.current?.emit("camera-toggle", { roomId, isOff }),
+    [roomId]
+  );
+
+  const emitSetFocusMode = useCallback(
+    (enabled) => socketRef.current?.emit("set-focus-mode", { roomId, enabled }),
     [roomId]
   );
 
@@ -170,6 +214,22 @@ export default function useSocket(roomId, userName, role) {
     handlersRef.current.onInterviewStarted = handler;
   }, []);
 
+  const onFocusModeChanged = useCallback((handler) => {
+    handlersRef.current.onFocusModeChanged = handler;
+  }, []);
+
+  const onWhiteboardDraw = useCallback((handler) => {
+    handlersRef.current.onWhiteboardDraw = handler;
+  }, []);
+
+  const onRemoteCameraToggle = useCallback((handler) => {
+    handlersRef.current.onRemoteCameraToggle = handler;
+  }, []);
+
+  const onWhiteboardClear = useCallback((handler) => {
+    handlersRef.current.onWhiteboardClear = handler;
+  }, []);
+
   return {
     isConnected,
     serverStateLost,
@@ -183,10 +243,18 @@ export default function useSocket(roomId, userName, role) {
     sendMessage,
     sharePeerId,
     emitSetInterviewId,
+    emitCameraToggle,
+    emitSetFocusMode,
+    emitWhiteboardDraw,
+    emitWhiteboardClear,
+    onRemoteCameraToggle,
+    onWhiteboardDraw,
+    onWhiteboardClear,
     onCodeUpdate,
     onLanguageUpdate,
     onOutputUpdate,
     onPeerIdReceived,
     onInterviewStarted,
+    onFocusModeChanged,
   };
 }

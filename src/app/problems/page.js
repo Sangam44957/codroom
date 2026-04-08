@@ -1,22 +1,138 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { motion, AnimatePresence } from "framer-motion";
+import { Plus, X, Trash2, ChevronDown } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
+import { toast } from "sonner";
 
-const TOPICS = [
-  "all", "arrays", "strings", "stacks", "math",
-  "linked-lists", "trees", "graphs", "design",
-];
-
+const TOPICS = ["arrays", "strings", "stacks", "math", "linked-lists", "trees", "graphs", "design", "other"];
 const DIFFICULTIES = ["all", "easy", "medium", "hard"];
 
-const difficultyColors = {
-  easy: "bg-green-900/30 text-green-400 border-green-800",
-  medium: "bg-yellow-900/30 text-yellow-400 border-yellow-800",
-  hard: "bg-red-900/30 text-red-400 border-red-800",
+const DIFF_CLS = {
+  easy:   "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
+  medium: "text-amber-400 bg-amber-500/10 border-amber-500/20",
+  hard:   "text-rose-400 bg-rose-500/10 border-rose-500/20",
 };
 
+function CreateProblemModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({
+    title: "", description: "", difficulty: "easy", topic: "arrays", starterCode: "",
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  function set(k) { return (e) => setForm((p) => ({ ...p, [k]: e.target.value })); }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.title.trim() || !form.description.trim()) {
+      setError("Title and description are required"); return;
+    }
+    setLoading(true); setError("");
+    try {
+      const res = await fetch("/api/problems", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error); return; }
+      toast.success("Problem created!");
+      onCreated(data.problem);
+    } catch { setError("Something went wrong"); }
+    finally { setLoading(false); }
+  }
+
+  const inputCls = "w-full px-4 py-3 bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500/50 transition-all text-sm";
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 px-4"
+      onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.96 }}
+        className="bg-[#0a0818] border border-violet-500/20 rounded-3xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl shadow-violet-500/10"
+      >
+        <div className="flex items-center justify-between mb-7">
+          <div>
+            <h2 className="text-2xl font-black text-white">Create Problem</h2>
+            <p className="text-slate-500 text-sm mt-1">Add a custom problem to your bank</p>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] text-slate-400 hover:text-white flex items-center justify-center transition-all">
+            <X size={15} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Title</label>
+            <input type="text" placeholder="Two Sum" value={form.title} onChange={set("title")} className={inputCls} />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Difficulty</label>
+              <select value={form.difficulty} onChange={set("difficulty")} className={inputCls}>
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Topic</label>
+              <select value={form.topic} onChange={set("topic")} className={inputCls}>
+                {TOPICS.map((t) => (
+                  <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Description</label>
+            <textarea
+              rows={5} placeholder="Describe the problem clearly..."
+              value={form.description} onChange={set("description")}
+              className={inputCls + " resize-none"}
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Starter Code <span className="text-slate-600">(optional)</span></label>
+            <textarea
+              rows={4} placeholder="function twoSum(nums, target) {\n  // your code here\n}"
+              value={form.starterCode} onChange={set("starterCode")}
+              className={inputCls + " resize-none font-mono text-xs"}
+            />
+          </div>
+
+          {error && (
+            <div className="p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-xl">
+              <p className="text-rose-400 text-sm">{error}</p>
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose}
+              className="flex-1 py-3 border border-white/[0.08] text-slate-400 hover:text-white rounded-xl text-sm font-semibold transition-all">
+              Cancel
+            </button>
+            <button type="submit" disabled={loading}
+              className="flex-1 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl text-sm font-semibold transition-all disabled:opacity-40">
+              {loading ? "Creating…" : "Create Problem"}
+            </button>
+          </div>
+        </form>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function ProblemsPage() {
+  const router = useRouter();
   const [user, setUser] = useState(null);
   const [problems, setProblems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,27 +140,18 @@ export default function ProblemsPage() {
   const [topic, setTopic] = useState("all");
   const [search, setSearch] = useState("");
   const [selectedProblem, setSelectedProblem] = useState(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [deleting, setDeleting] = useState(null);
 
   useEffect(() => {
-    fetchUser();
-  }, []);
+    fetch("/api/auth/me").then((r) => {
+      if (!r.ok) { router.push("/login"); return; }
+      return r.json();
+    }).then((d) => d && setUser(d.user));
+  }, [router]);
 
-  useEffect(() => {
-    fetchProblems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [difficulty, topic, search]);
-
-  async function fetchUser() {
-    try {
-      const res = await fetch("/api/auth/me");
-      if (res.ok) {
-        const data = await res.json();
-        setUser(data.user);
-      }
-    } catch {
-      // Not logged in
-    }
-  }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchProblems(); }, [difficulty, topic, search]);
 
   async function fetchProblems() {
     setLoading(true);
@@ -53,162 +160,188 @@ export default function ProblemsPage() {
       if (difficulty !== "all") params.set("difficulty", difficulty);
       if (topic !== "all") params.set("topic", topic);
       if (search) params.set("search", search);
-
       const res = await fetch(`/api/problems?${params}`);
       const data = await res.json();
+      if (res.ok) setProblems(data.problems);
+    } finally { setLoading(false); }
+  }
 
+  async function handleDelete(e, problem) {
+    e.stopPropagation();
+    if (!confirm(`Delete "${problem.title}"? This cannot be undone.`)) return;
+    setDeleting(problem.id);
+    try {
+      const res = await fetch(`/api/problems?id=${problem.id}`, { method: "DELETE" });
       if (res.ok) {
-        setProblems(data.problems);
-      }
-    } catch {
-      console.error("Failed to fetch problems");
-    } finally {
-      setLoading(false);
-    }
+        toast.success("Problem deleted");
+        setProblems((p) => p.filter((x) => x.id !== problem.id));
+        if (selectedProblem?.id === problem.id) setSelectedProblem(null);
+      } else toast.error("Delete failed");
+    } finally { setDeleting(null); }
   }
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      <Navbar user={user} />
+    <div className="min-h-screen bg-[#04040f]">
+      <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
+      <div className="dot-grid fixed inset-0 pointer-events-none z-0 opacity-30" />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white">Problem Bank</h1>
-          <p className="text-gray-400 mt-1">
-            {problems.length} problem{problems.length !== 1 ? "s" : ""} available
-          </p>
-        </div>
+      <div className="relative z-10">
+        <Navbar user={user} />
 
-        {/* Filters */}
-        <div className="flex flex-wrap items-center gap-4 mb-6">
-          {/* Search */}
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search problems..."
-            className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
-          />
-
-          {/* Difficulty Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-400 text-sm">Difficulty:</span>
-            {DIFFICULTIES.map((d) => (
-              <button
-                key={d}
-                onClick={() => setDifficulty(d)}
-                className={`px-3 py-1.5 text-xs rounded-lg capitalize transition-all ${
-                  difficulty === d
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-800 text-gray-400 hover:bg-gray-700 border border-gray-700"
-                }`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
-
-          {/* Topic Filter */}
-          <div className="flex items-center gap-2">
-            <span className="text-gray-400 text-sm">Topic:</span>
-            <select
-              value={topic}
-              onChange={(e) => setTopic(e.target.value)}
-              className="px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        <main className="max-w-7xl mx-auto px-6 py-10">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-8">
+            <div>
+              <h1 className="text-3xl font-black text-white tracking-tight">Problem Bank</h1>
+              <p className="text-slate-500 text-sm mt-1">{problems.length} problem{problems.length !== 1 ? "s" : ""} available</p>
+            </div>
+            <motion.button
+              onClick={() => setShowCreate(true)}
+              whileHover={{ scale: 1.04, y: -2 }}
+              whileTap={{ scale: 0.97 }}
+              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-semibold text-sm shadow-lg shadow-violet-600/25 transition-all"
             >
-              {TOPICS.map((t) => (
-                <option key={t} value={t}>
-                  {t === "all" ? "All Topics" : t.charAt(0).toUpperCase() + t.slice(1)}
-                </option>
-              ))}
-            </select>
+              <Plus size={16} /> Create Problem
+            </motion.button>
           </div>
-        </div>
 
-        <div className="flex gap-6">
-          {/* Problem List */}
-          <div className="flex-1">
-            {loading ? (
-              <div className="text-gray-400 text-center py-10">Loading...</div>
-            ) : problems.length === 0 ? (
-              <div className="text-center py-10">
-                <div className="text-4xl mb-3">🔍</div>
-                <p className="text-gray-400">No problems found</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {problems.map((problem) => (
-                  <div
-                    key={problem.id}
-                    onClick={() => setSelectedProblem(problem)}
-                    className={`p-4 rounded-xl cursor-pointer transition-all border ${
-                      selectedProblem?.id === problem.id
-                        ? "bg-gray-800 border-blue-600"
-                        : "bg-gray-900 border-gray-800 hover:border-gray-700"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-white font-medium">{problem.title}</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-gray-500 text-xs capitalize">
-                          {problem.topic}
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 text-xs rounded-full border capitalize ${
-                            difficultyColors[problem.difficulty]
-                          }`}
-                        >
+          {/* Filters */}
+          <div className="flex flex-wrap items-center gap-3 mb-6">
+            <input
+              type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search problems…"
+              className="px-4 py-2.5 bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/30 w-56 transition-all"
+            />
+            <div className="flex items-center gap-1.5">
+              {DIFFICULTIES.map((d) => (
+                <button key={d} onClick={() => setDifficulty(d)}
+                  className={`px-3 py-2 text-xs rounded-xl capitalize font-medium border transition-all ${
+                    difficulty === d
+                      ? d === "all" ? "bg-violet-500/15 border-violet-500/30 text-violet-300"
+                        : DIFF_CLS[d]
+                      : "bg-white/[0.03] border-white/[0.07] text-slate-500 hover:text-slate-300"
+                  }`}>{d}</button>
+              ))}
+            </div>
+            <div className="relative">
+              <select value={topic} onChange={(e) => setTopic(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-2.5 bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-all">
+                <option value="all">All Topics</option>
+                {TOPICS.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+              </select>
+              <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            </div>
+          </div>
+
+          <div className="flex gap-5">
+            {/* List */}
+            <div className="flex-1 min-w-0">
+              {loading ? (
+                <div className="space-y-2">
+                  {Array(6).fill(0).map((_, i) => (
+                    <div key={i} className="skeleton h-14 rounded-xl" />
+                  ))}
+                </div>
+              ) : problems.length === 0 ? (
+                <div className="text-center py-20">
+                  <div className="text-4xl mb-3">🔍</div>
+                  <p className="text-slate-500">No problems found</p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {problems.map((problem) => (
+                    <motion.div
+                      key={problem.id}
+                      onClick={() => setSelectedProblem(problem)}
+                      whileHover={{ x: 2 }}
+                      className={`flex items-center justify-between p-4 rounded-xl cursor-pointer border transition-all ${
+                        selectedProblem?.id === problem.id
+                          ? "bg-violet-500/10 border-violet-500/30"
+                          : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.12]"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <h3 className="text-white text-sm font-medium truncate">{problem.title}</h3>
+                        {problem.isOwn && (
+                          <span className="text-[10px] px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-md flex-shrink-0">Mine</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                        <span className="text-slate-600 text-xs capitalize hidden sm:inline">{problem.topic}</span>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-lg border capitalize font-medium ${DIFF_CLS[problem.difficulty] || ""}`}>
                           {problem.difficulty}
                         </span>
+                        {problem.isOwn && (
+                          <button
+                            onClick={(e) => handleDelete(e, problem)}
+                            disabled={deleting === problem.id}
+                            className="p-1.5 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all disabled:opacity-40"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
                       </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Problem Detail */}
-          {selectedProblem && (
-            <div className="w-[450px] bg-gray-900 border border-gray-800 rounded-xl p-6 h-fit sticky top-8 max-h-[80vh] overflow-y-auto">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-bold text-white">
-                  {selectedProblem.title}
-                </h2>
-                <span
-                  className={`px-3 py-1 text-xs rounded-full border capitalize ${
-                    difficultyColors[selectedProblem.difficulty]
-                  }`}
-                >
-                  {selectedProblem.difficulty}
-                </span>
-              </div>
-
-              <div className="mb-4">
-                <span className="text-gray-500 text-xs capitalize bg-gray-800 px-2 py-1 rounded">
-                  {selectedProblem.topic}
-                </span>
-              </div>
-
-              <pre className="text-gray-300 text-sm whitespace-pre-wrap leading-relaxed mb-6">
-                {selectedProblem.description}
-              </pre>
-
-              {selectedProblem.starterCode && (
-                <div className="mb-4">
-                  <h4 className="text-sm font-medium text-gray-400 mb-2">
-                    Starter Code:
-                  </h4>
-                  <pre className="bg-gray-800 p-3 rounded-lg text-green-300 text-sm overflow-x-auto">
-                    {selectedProblem.starterCode}
-                  </pre>
+                    </motion.div>
+                  ))}
                 </div>
               )}
             </div>
-          )}
-        </div>
-      </main>
+
+            {/* Detail panel */}
+            <AnimatePresence>
+              {selectedProblem && (
+                <motion.div
+                  initial={{ opacity: 0, x: 20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: 20 }}
+                  className="w-[420px] flex-shrink-0 bg-[#0a0818] border border-white/[0.07] rounded-2xl p-6 h-fit sticky top-8 max-h-[80vh] overflow-y-auto"
+                >
+                  <div className="flex items-start justify-between gap-3 mb-4">
+                    <h2 className="text-lg font-bold text-white leading-snug">{selectedProblem.title}</h2>
+                    <button onClick={() => setSelectedProblem(null)} className="text-slate-600 hover:text-slate-300 flex-shrink-0 mt-0.5">
+                      <X size={15} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-5">
+                    <span className={`text-xs px-2.5 py-1 rounded-lg border capitalize font-medium ${DIFF_CLS[selectedProblem.difficulty] || ""}`}>
+                      {selectedProblem.difficulty}
+                    </span>
+                    <span className="text-xs px-2.5 py-1 bg-white/[0.04] border border-white/[0.07] text-slate-400 rounded-lg capitalize">
+                      {selectedProblem.topic}
+                    </span>
+                  </div>
+
+                  <pre className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed mb-5 font-sans">
+                    {selectedProblem.description}
+                  </pre>
+
+                  {selectedProblem.starterCode && (
+                    <div>
+                      <p className="text-xs text-slate-500 uppercase tracking-widest mb-2">Starter Code</p>
+                      <pre className="bg-white/[0.03] border border-white/[0.06] p-4 rounded-xl text-emerald-300 text-xs overflow-x-auto font-mono leading-relaxed">
+                        {selectedProblem.starterCode}
+                      </pre>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        </main>
+      </div>
+
+      <AnimatePresence>
+        {showCreate && (
+          <CreateProblemModal
+            onClose={() => setShowCreate(false)}
+            onCreated={(p) => {
+              setProblems((prev) => [{ ...p, isOwn: true }, ...prev]);
+              setShowCreate(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

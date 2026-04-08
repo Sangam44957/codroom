@@ -8,11 +8,19 @@ datasource db {
 }
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  password  String
-  createdAt DateTime @default(now())
+  id                 String    @id @default(cuid())
+  name               String
+  email              String    @unique
+  password           String
+  emailVerified      Boolean   @default(false)
+  verifyToken        String?   @unique
+  verifyOtp          String?
+  verifyOtpExpiry    DateTime?
+  resetToken         String?   @unique
+  resetTokenExpiry   DateTime?
+  resetOtp           String?
+  resetOtpExpiry     DateTime?
+  createdAt          DateTime  @default(now())
 
   rooms    Room[]
   problems Problem[]
@@ -32,12 +40,30 @@ model Room {
   createdById String
   createdBy   User    @relation(fields: [createdById], references: [id])
 
+  // legacy single-problem (kept for backwards compat, nullable)
   problemId String?
   problem   Problem? @relation(fields: [problemId], references: [id])
 
+  problems  RoomProblem[]
   interview Interview?
+  messages  ChatMessage[]
 
   @@map("rooms")
+}
+
+model RoomProblem {
+  id        String  @id @default(cuid())
+  order     Int     @default(0)
+
+  roomId    String
+  room      Room    @relation(fields: [roomId], references: [id])
+
+  problemId String
+  problem   Problem @relation(fields: [problemId], references: [id])
+
+  @@unique([roomId, problemId])
+  @@index([roomId, order])
+  @@map("room_problems")
 }
 
 model Problem {
@@ -52,7 +78,8 @@ model Problem {
   createdById String?
   createdBy   User?   @relation(fields: [createdById], references: [id])
 
-  rooms Room[]
+  rooms     Room[]
+  roomLinks RoomProblem[]
 
   @@map("problems")
 }
@@ -98,6 +125,20 @@ model InterviewEvent {
   interview   Interview @relation(fields: [interviewId], references: [id])
 
   @@map("interview_events")
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  roomId      String
+  sender      String
+  role        String
+  text        String
+  timestamp   DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id])
+
+  @@index([roomId, timestamp])
+  @@map("chat_messages")
 }
 
 model InterviewerNote {

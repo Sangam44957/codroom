@@ -14,6 +14,7 @@ export const GET = withAuthz(async (request, { params }) => {
     include: {
       createdBy: { select: { id: true, name: true, email: true } },
       problem: true,
+      problems: { include: { problem: true }, orderBy: { order: "asc" } },
       interview: { include: { report: true } },
     },
   });
@@ -48,12 +49,10 @@ export const GET = withAuthz(async (request, { params }) => {
   }
 
   // Strip expected test case outputs so candidates cannot read answers
-  const sanitizedProblem = room.problem
-    ? {
-        ...room.problem,
-        testCases: (room.problem.testCases || []).map(({ input }) => ({ input })),
-      }
-    : null;
+  const sanitizeProblem = (p) => p ? {
+    ...p,
+    testCases: (p.testCases || []).map(({ input }) => ({ input })),
+  } : null;
 
   return NextResponse.json(
     {
@@ -62,7 +61,8 @@ export const GET = withAuthz(async (request, { params }) => {
         title: room.title,
         status: room.status,
         language: room.language,
-        problem: sanitizedProblem,
+        problem: sanitizeProblem(room.problem),
+        problems: (room.problems || []).map((rp) => ({ ...rp, problem: sanitizeProblem(rp.problem) })),
         interview: room.interview
           ? { id: room.interview.id, status: room.interview.status, language: room.interview.language }
           : null,

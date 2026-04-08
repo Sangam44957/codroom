@@ -1,18 +1,18 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import Editor from "@monaco-editor/react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Plus, X } from "lucide-react";
 
 const LANGUAGE_CONFIG = {
-  javascript: { label: "JavaScript",  defaultCode: `// Welcome to CodRoom\n\nfunction solution() {\n  \n}\n` },
-  typescript: { label: "TypeScript",  defaultCode: `// Welcome to CodRoom\n\nfunction solution(): void {\n  \n}\n` },
-  python:     { label: "Python",      defaultCode: `# Welcome to CodRoom\n\ndef solution():\n    pass\n` },
-  java:       { label: "Java",        defaultCode: `// Welcome to CodRoom\n\npublic class Solution {\n    public static void main(String[] args) {\n        \n    }\n}\n` },
-  cpp:        { label: "C++",         defaultCode: `// Welcome to CodRoom\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n` },
-  csharp:     { label: "C#",          defaultCode: `// Welcome to CodRoom\n\nusing System;\n\nclass Solution {\n    static void Main() {\n        \n    }\n}\n` },
-  go:         { label: "Go",          defaultCode: `// Welcome to CodRoom\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello")\n}\n` },
-  rust:       { label: "Rust",        defaultCode: `// Welcome to CodRoom\n\nfn main() {\n    \n}\n` },
+  javascript: { label: "JavaScript", ext: "js",   defaultCode: `// Welcome to CodRoom\n\nfunction solution() {\n  \n}\n` },
+  typescript: { label: "TypeScript", ext: "ts",   defaultCode: `// Welcome to CodRoom\n\nfunction solution(): void {\n  \n}\n` },
+  python:     { label: "Python",     ext: "py",   defaultCode: `# Welcome to CodRoom\n\ndef solution():\n    pass\n` },
+  java:       { label: "Java",       ext: "java", defaultCode: `// Welcome to CodRoom\n\npublic class Solution {\n    public static void main(String[] args) {\n        \n    }\n}\n` },
+  cpp:        { label: "C++",        ext: "cpp",  defaultCode: `// Welcome to CodRoom\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n` },
+  csharp:     { label: "C#",         ext: "cs",   defaultCode: `// Welcome to CodRoom\n\nusing System;\n\nclass Solution {\n    static void Main() {\n        \n    }\n}\n` },
+  go:         { label: "Go",         ext: "go",   defaultCode: `// Welcome to CodRoom\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello")\n}\n` },
+  rust:       { label: "Rust",       ext: "rs",   defaultCode: `// Welcome to CodRoom\n\nfn main() {\n    \n}\n` },
 };
 
 const LANG_COLORS = {
@@ -21,25 +21,96 @@ const LANG_COLORS = {
   go: "#00ADD8", rust: "#dea584",
 };
 
-export default function CodeEditor({ language = "javascript", onLanguageChange, code, onCodeChange }) {
-  const [editorReady, setEditorReady] = useState(false);
+/** Build the initial files map for a given language + optional starter code. */
+function buildInitialFiles(language, starterCode) {
+  const cfg = LANGUAGE_CONFIG[language] ?? LANGUAGE_CONFIG.javascript;
+  const filename = `solution.${cfg.ext}`;
+  return { [filename]: starterCode || cfg.defaultCode };
+}
 
+/** Derive a unique new filename that doesn't clash with existing tabs. */
+function nextFilename(language, existing) {
+  const ext = LANGUAGE_CONFIG[language]?.ext ?? "js";
+  let i = 2;
+  while (existing.includes(`solution${i}.${ext}`)) i++;
+  return `solution${i}.${ext}`;
+}
+
+export default function CodeEditor({
+  language = "javascript",
+  onLanguageChange,
+  files,           // { [filename]: code }
+  activeFile,      // string
+  onActiveFileChange,
+  onFileChange,    // (filename, code) => void
+  onFilesChange,   // (newFiles, newActive) => void  — for add/close
+}) {
+  const [editorReady, setEditorReady] = useState(false);
   const langColor = LANG_COLORS[language] || "#888";
+  const filenames = Object.keys(files ?? {});
+
+  const handleAddFile = useCallback(() => {
+    const name = nextFilename(language, filenames);
+    const cfg  = LANGUAGE_CONFIG[language] ?? LANGUAGE_CONFIG.javascript;
+    const newFiles = { ...files, [name]: cfg.defaultCode };
+    onFilesChange?.(newFiles, name);
+  }, [language, filenames, files, onFilesChange]);
+
+  const handleCloseFile = useCallback((name, e) => {
+    e.stopPropagation();
+    if (filenames.length <= 1) return; // always keep at least one tab
+    const newFiles = { ...files };
+    delete newFiles[name];
+    const newActive = name === activeFile
+      ? Object.keys(newFiles)[0]
+      : activeFile;
+    onFilesChange?.(newFiles, newActive);
+  }, [filenames, files, activeFile, onFilesChange]);
 
   return (
     <div className="flex flex-col h-full bg-[#0d0d18]">
-      {/* Editor tab bar — VS Code style */}
-      <div className="flex items-center justify-between px-3 h-9 bg-[#111118] border-b border-white/[0.06] flex-shrink-0">
-        {/* Active file tab */}
-        <div className="flex items-center gap-0">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-[#0d0d18] border-t border-l border-r border-white/[0.07] rounded-t text-xs text-slate-300 -mb-px">
-            <span style={{ color: langColor }} className="text-[10px]">●</span>
-            solution.{language === "python" ? "py" : language === "java" ? "java" : language === "cpp" ? "cpp" : language === "csharp" ? "cs" : language === "go" ? "go" : language === "rust" ? "rs" : language === "typescript" ? "ts" : "js"}
-          </div>
+      {/* Tab bar */}
+      <div className="flex items-center bg-[#111118] border-b border-white/[0.06] flex-shrink-0 min-h-[36px]">
+        {/* File tabs — scrollable */}
+        <div className="flex items-end overflow-x-auto flex-1 min-w-0 scrollbar-none">
+          {filenames.map((name) => {
+            const active = name === activeFile;
+            return (
+              <button
+                key={name}
+                onClick={() => onActiveFileChange?.(name)}
+                className={`group flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap border-r border-white/[0.04] transition-colors flex-shrink-0 ${
+                  active
+                    ? "bg-[#0d0d18] text-slate-200 border-t-2 border-t-violet-500"
+                    : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.03] border-t-2 border-t-transparent"
+                }`}
+              >
+                <span style={{ color: active ? langColor : undefined }} className="text-[10px]">●</span>
+                {name}
+                {filenames.length > 1 && (
+                  <span
+                    onClick={(e) => handleCloseFile(name, e)}
+                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 transition-opacity ml-0.5 leading-none"
+                  >
+                    <X size={10} />
+                  </span>
+                )}
+              </button>
+            );
+          })}
+
+          {/* Add file */}
+          <button
+            onClick={handleAddFile}
+            className="flex-shrink-0 px-2 py-2 text-slate-600 hover:text-slate-300 hover:bg-white/[0.04] transition-colors"
+            title="New file"
+          >
+            <Plus size={13} />
+          </button>
         </div>
 
-        {/* Language selector + status */}
-        <div className="flex items-center gap-3">
+        {/* Language selector + status — right-aligned, never scrolls */}
+        <div className="flex items-center gap-3 px-3 flex-shrink-0">
           <div className="relative">
             <select
               value={language}
@@ -64,9 +135,9 @@ export default function CodeEditor({ language = "javascript", onLanguageChange, 
       <div className="flex-1 min-h-0">
         <Editor
           height="100%"
-          language={language === "cpp" ? "cpp" : language === "csharp" ? "csharp" : language}
-          value={code}
-          onChange={(v) => onCodeChange(v || "")}
+          language={language}
+          value={files?.[activeFile] ?? ""}
+          onChange={(v) => onFileChange?.(activeFile, v || "")}
           onMount={() => setEditorReady(true)}
           theme="vs-dark"
           options={{
@@ -97,4 +168,4 @@ export default function CodeEditor({ language = "javascript", onLanguageChange, 
   );
 }
 
-export { LANGUAGE_CONFIG };
+export { LANGUAGE_CONFIG, buildInitialFiles };

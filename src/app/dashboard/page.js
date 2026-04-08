@@ -53,17 +53,25 @@ export default function DashboardPage() {
   const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(page); }, [page]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function fetchData() {
+  async function fetchData(p = 1) {
     try {
       const userRes = await fetch("/api/auth/me");
       if (!userRes.ok) { router.push("/login"); return; }
       const userData = await userRes.json();
       setUser(userData.user);
-      const roomsRes = await fetch("/api/rooms");
-      if (roomsRes.ok) setRooms((await roomsRes.json()).rooms);
+      const roomsRes = await fetch(`/api/rooms?page=${p}`);
+      if (roomsRes.ok) {
+        const d = await roomsRes.json();
+        setRooms(d.rooms);
+        setTotal(d.total ?? d.rooms.length);
+        setTotalPages(d.totalPages ?? 1);
+      }
     } catch { router.push("/login"); }
     finally { setLoading(false); }
   }
@@ -88,7 +96,6 @@ export default function DashboardPage() {
   const active    = rooms.filter((r) => r.status === "active").length;
   const completed = rooms.filter((r) => r.status === "completed" || r.status === "evaluated").length;
   const evaluated = rooms.filter((r) => r.interview?.report).length;
-
   // Greeting by time of day
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
@@ -150,6 +157,7 @@ export default function DashboardPage() {
             {rooms.length > 0 && (
               <div className="flex items-center justify-between mb-6">
                 <h2 className="text-2xl font-bold text-white">Your Interviews</h2>
+                <span className="text-slate-500 text-sm">{total} total</span>
               </div>
             )}
 
@@ -181,21 +189,55 @@ export default function DashboardPage() {
                 </motion.button>
               </motion.div>
             ) : (
-              <motion.div
-                variants={stagger}
-                initial="initial"
-                animate="animate"
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
-              >
-                {rooms.map((room) => (
-                  <motion.div key={room.id} variants={fadeUp}>
-                    <RoomCard
-                      room={room}
-                      onDeleted={(id) => setRooms((p) => p.filter((r) => r.id !== id))}
-                    />
-                  </motion.div>
-                ))}
-              </motion.div>
+              <>
+                <motion.div
+                  variants={stagger}
+                  initial="initial"
+                  animate="animate"
+                  className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"
+                >
+                  {rooms.map((room) => (
+                    <motion.div key={room.id} variants={fadeUp}>
+                      <RoomCard
+                        room={room}
+                        onDeleted={(id) => setRooms((p) => p.filter((r) => r.id !== id))}
+                      />
+                    </motion.div>
+                  ))}
+                </motion.div>
+
+                {totalPages > 1 && (
+                  <div className="flex items-center justify-center gap-2 mt-10">
+                    <button
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                      className="px-4 py-2 text-sm text-slate-400 hover:text-white border border-white/[0.07] hover:border-white/[0.14] rounded-xl disabled:opacity-30 transition-all"
+                    >
+                      ← Prev
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                      <button
+                        key={p}
+                        onClick={() => setPage(p)}
+                        className={`w-9 h-9 text-sm rounded-xl border transition-all ${
+                          p === page
+                            ? "bg-violet-600/30 border-violet-500/50 text-violet-300 font-semibold"
+                            : "border-white/[0.07] text-slate-500 hover:text-white hover:border-white/[0.14]"
+                        }`}
+                      >
+                        {p}
+                      </button>
+                    ))}
+                    <button
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                      className="px-4 py-2 text-sm text-slate-400 hover:text-white border border-white/[0.07] hover:border-white/[0.14] rounded-xl disabled:opacity-30 transition-all"
+                    >
+                      Next →
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </motion.div>
         </main>

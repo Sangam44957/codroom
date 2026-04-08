@@ -2,17 +2,23 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-export default function useSecurityMonitor(isActive, onViolation) {
+const DEFAULT_LOCK_THRESHOLD = 10; // auto-lock after this many violations
+
+export default function useSecurityMonitor(isActive, onViolation, onLocked, lockThreshold = DEFAULT_LOCK_THRESHOLD) {
   const [violations, setViolations] = useState([]);
   const [warningCount, setWarningCount] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLocked, setIsLocked] = useState(false);
   const onViolationRef = useRef(onViolation);
+  const onLockedRef = useRef(onLocked);
+  const violationCountRef = useRef(0); // sync ref to avoid stale closure in handlers
   // Debounce blur — Monaco iframe focus transfers cause false positives
   const blurTimerRef = useRef(null);
+  // Track last keydown time for Ctrl+A+C combo detection
+  const lastSelectAllRef = useRef(0);
 
-  useEffect(() => {
-    onViolationRef.current = onViolation;
-  }, [onViolation]);
+  useEffect(() => { onViolationRef.current = onViolation; }, [onViolation]);
+  useEffect(() => { onLockedRef.current = onLocked; }, [onLocked]);
 
   const addViolation = useCallback((type, details) => {
     const violation = {
@@ -24,7 +30,13 @@ export default function useSecurityMonitor(isActive, onViolation) {
     setViolations((prev) => [...prev, violation]);
     setWarningCount((prev) => prev + 1);
     onViolationRef.current?.(violation);
-  }, []);
+
+    violationCountRef.current += 1;
+    if (violationCountRef.current >= lockThreshold) {
+      setIsLocked(true);
+      onLockedRef.current?.(violationCountRef.current);
+    }
+  }, [lockThreshold]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -84,7 +96,33 @@ export default function useSecurityMonitor(isActive, onViolation) {
         addViolation("devtools", "Candidate pressed F12");
         e.preventDefault();
       }
+      // Ctrl+A — record timestamp for combo detection
+      if (e.ctrlKey && e.key === "a") {
+        lastSelectAllRef.current = Date.now();
+      }
+      // Ctrl+C — flag as copy attempt
+      // Also catches Ctrl+A then Ctrl+C within 2s (select-all + copy combo)
+      if (e.ctrlKey && e.key === "c") {
+        const isCombo = Date.now() - lastSelectAllRef.current < 2000;
+        addViolation(
+          "copy_detected",
+          isCombo ? "Candidate used Ctrl+A then Ctrl+C (select-all copy)" : "Candidate copied text (Ctrl+C)"
+        );
+      }
     }
+
+    // Block dynamically injected external scripts
+    const scriptObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node.nodeName === "SCRIPT" && node.src && !node.src.startsWith(window.location.origin)) {
+            node.remove();
+            addViolation("external_script", `Blocked external script: ${node.src}`);
+          }
+        }
+      }
+    });
+    scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", handleBlur);
@@ -102,6 +140,7 @@ export default function useSecurityMonitor(isActive, onViolation) {
       document.removeEventListener("paste", handlePaste);
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
+      scriptObserver.disconnect();
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
     };
   }, [isActive, addViolation]);
@@ -124,5 +163,5 @@ export default function useSecurityMonitor(isActive, onViolation) {
     }
   }, []);
 
-  return { violations, warningCount, isFullscreen, requestFullscreen, exitFullscreen };
+  return { violations, warningCount, isFullscreen, isLocked, requestFullscreen, exitFullscreen };
 }

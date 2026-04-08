@@ -27,7 +27,9 @@ export default function RegisterPage() {
     if (!formData.email.trim()) e.email = "Email is required";
     else if (!/\S+@\S+\.\S+/.test(formData.email)) e.email = "Enter a valid email";
     if (!formData.password) e.password = "Password is required";
-    else if (formData.password.length < 6) e.password = "Minimum 6 characters";
+    else if (formData.password.length < 8) e.password = "Minimum 8 characters";
+    else if (!/[A-Z]/.test(formData.password)) e.password = "Must include an uppercase letter";
+    else if (!/[0-9]/.test(formData.password)) e.password = "Must include a number";
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -45,6 +47,10 @@ export default function RegisterPage() {
       });
       const data = await res.json();
       if (!res.ok) { setApiError(data.error); return; }
+      if (data.needsVerification) {
+        router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+        return;
+      }
       router.push("/dashboard");
     } catch {
       setApiError("Something went wrong. Please try again.");

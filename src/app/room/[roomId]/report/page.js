@@ -79,6 +79,7 @@ export default function ReportPage() {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [polling, setPolling] = useState(false);
   const [error, setError] = useState("");
   const [shareUrl, setShareUrl] = useState("");
   const [sharing, setSharing] = useState(false);
@@ -90,7 +91,28 @@ export default function ReportPage() {
     problemSolving: 0, communication: 0, codeQuality: 0, edgeCases: 0, speed: 0,
   });
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchData(); }, []);
+
+  // Poll every 3s if the interview is completed but report not yet ready
+  useEffect(() => {
+    if (!polling) return;
+    const id = setInterval(async () => {
+      const roomRes = await fetch(`/api/rooms/${roomId}`).catch(() => null);
+      if (!roomRes?.ok) return;
+      const roomData = await roomRes.json();
+      const interviewId = roomData.room?.interview?.id;
+      if (!interviewId) return;
+      const reportRes = await fetch(`/api/interviews/${interviewId}/report`);
+      if (reportRes.ok) {
+        const d = await reportRes.json();
+        setReport(d.report);
+        setPolling(false);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [polling, roomId]);
 
   async function fetchData() {
     try {
@@ -115,6 +137,9 @@ export default function ReportPage() {
             });
           }
           if (r.shareToken) setShareUrl(`${window.location.origin}/share/${r.shareToken}`);
+        } else if (roomData.room.interview?.status === "completed") {
+          // Report not ready yet — start polling
+          setPolling(true);
         }
       }
     } catch { setError("Failed to load report"); }
@@ -234,7 +259,6 @@ export default function ReportPage() {
         <div className="ambient-orbs"><div className="orb orb-violet" /><div className="orb orb-cyan" /></div>
         <div className="dot-grid fixed inset-0 pointer-events-none opacity-30" />
 
-        {/* Navbar */}
         <nav className="sticky top-0 z-50 bg-[#04040f]/80 backdrop-blur-2xl border-b border-white/[0.06]">
           <div className="max-w-5xl mx-auto px-6 flex items-center gap-4 h-14">
             <button onClick={() => router.push("/dashboard")} className="text-slate-500 hover:text-white transition-colors">
@@ -245,40 +269,57 @@ export default function ReportPage() {
         </nav>
 
         <div className="relative z-10 max-w-2xl mx-auto px-6 py-24 text-center">
-          <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-3xl">🤖</div>
-          <h1 className="text-3xl font-black text-white mb-3">Generate AI Report</h1>
-          <p className="text-slate-500 mb-10 leading-relaxed">
-            AI will analyze the code for correctness, complexity, edge cases, and quality — then give a hiring recommendation.
-          </p>
-
-          <div className="grid grid-cols-3 gap-3 mb-10">
-            {[
-              { label: "Problem", value: room?.problem?.title || "Free coding" },
-              { label: "Language", value: (room?.interview?.language || "—").toUpperCase() },
-              { label: "Duration", value: room?.interview?.duration ? `${Math.round(room.interview.duration / 60)}m` : "—" },
-            ].map((m, i) => (
-              <div key={i} className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4 text-left">
-                <div className="text-xs text-slate-600 uppercase tracking-widest mb-1">{m.label}</div>
-                <div className="text-white text-sm font-semibold truncate">{m.value}</div>
+          {polling ? (
+            <>
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center">
+                <div className="w-7 h-7 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
               </div>
-            ))}
-          </div>
+              <h1 className="text-3xl font-black text-white mb-3">Generating AI Report</h1>
+              <p className="text-slate-500 mb-4 leading-relaxed">AI is analyzing the code. This usually takes 10–20 seconds…</p>
+              <div className="flex items-center justify-center gap-1.5">
+                {[0,1,2].map((i) => (
+                  <div key={i} className="w-1.5 h-1.5 bg-violet-500 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-violet-500/10 border border-violet-500/20 flex items-center justify-center text-3xl">🤖</div>
+              <h1 className="text-3xl font-black text-white mb-3">Generate AI Report</h1>
+              <p className="text-slate-500 mb-10 leading-relaxed">
+                AI will analyze the code for correctness, complexity, edge cases, and quality — then give a hiring recommendation.
+              </p>
 
-          {error && (
-            <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-sm">{error}</div>
+              <div className="grid grid-cols-3 gap-3 mb-10">
+                {[
+                  { label: "Problems", value: room?.problems?.length ? room.problems.map((rp) => rp.problem?.title).join(", ") : room?.problem?.title || "Free coding" },
+                  { label: "Language", value: (room?.interview?.language || "—").toUpperCase() },
+                  { label: "Duration", value: room?.interview?.duration ? `${Math.round(room.interview.duration / 60)}m` : "—" },
+                ].map((m, i) => (
+                  <div key={i} className="bg-white/[0.03] border border-white/[0.07] rounded-xl p-4 text-left">
+                    <div className="text-xs text-slate-600 uppercase tracking-widest mb-1">{m.label}</div>
+                    <div className="text-white text-sm font-semibold truncate">{m.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              {error && (
+                <div className="mb-6 p-4 bg-rose-500/10 border border-rose-500/20 rounded-xl text-rose-400 text-sm">{error}</div>
+              )}
+
+              <button
+                onClick={generateReport}
+                disabled={generating}
+                className="px-10 py-4 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-2xl font-bold text-lg shadow-lg shadow-violet-600/25 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2 mx-auto"
+              >
+                {generating ? (
+                  <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
+                ) : (
+                  <><RefreshCw size={18} /> Generate Report</>
+                )}
+              </button>
+            </>
           )}
-
-          <button
-            onClick={generateReport}
-            disabled={generating}
-            className="px-10 py-4 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-2xl font-bold text-lg shadow-lg shadow-violet-600/25 hover:-translate-y-0.5 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center gap-2 mx-auto"
-          >
-            {generating ? (
-              <><div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Generating...</>
-            ) : (
-              <><RefreshCw size={18} /> Generate Report</>
-            )}
-          </button>
         </div>
       </div>
     );
@@ -417,7 +458,7 @@ export default function ReportPage() {
             {/* Session info */}
             <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-5 space-y-3">
               <h2 className="text-sm font-semibold text-white mb-1">Session Info</h2>
-              <MetricPill label="Problem"  value={room?.problem?.title || "Free coding"} />
+              <MetricPill label="Problems" value={room?.problems?.length ? room.problems.map((rp) => rp.problem?.title).join(", ") : room?.problem?.title || "Free coding"} />
               <MetricPill label="Language" value={(room?.interview?.language || "—").toUpperCase()} />
               <MetricPill label="Duration" value={room?.interview?.duration ? `${Math.round(room.interview.duration / 60)}m` : "—"} />
             </div>

@@ -1,23 +1,37 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 
-const ICE_SERVERS = {
-  iceServers: [
+// Fetch ICE config from the server — TURN credentials never touch the client bundle.
+async function fetchIceServers() {
+  try {
+    const res = await fetch("/api/turn");
+    if (res.ok) {
+      const data = await res.json();
+      return data.iceServers;
+    }
+  } catch {}
+  // Fallback: STUN only
+  return [
     { urls: "stun:stun.l.google.com:19302" },
-    { urls: "stun:stun1.l.google.com:19302" },
-    { urls: "stun:stun2.l.google.com:19302" },
     { urls: "stun:stun.cloudflare.com:3478" },
-    // Add TURN server here for guaranteed NAT traversal:
-    // { urls: "turn:your-turn-server.com", username: "user", credential: "pass" },
-  ],
-};
+  ];
+}
 
-export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
+// Returns true when the current context can access camera/mic.
+// Requires HTTPS (or localhost) — plain HTTP on a real IP will always fail.
+function mediaDevicesAvailable() {
+  return !!navigator.mediaDevices?.getUserMedia;
+}
+
+export default function VideoPanel({ sharePeerId, onPeerIdReceived, emitCameraToggle, onRemoteCameraToggle }) {
   const [remoteStream, setRemoteStream] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isCameraOff, setIsCameraOff] = useState(false);
+  const [remoteCameraOff, setRemoteCameraOff] = useState(false);
   const [callStatus, setCallStatus] = useState("initializing");
+  const [httpsRequired, setHttpsRequired] = useState(false);
 
   const myVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -29,6 +43,19 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
 
   // Mount = start, unmount = stop
   useEffect(() => {
+    if (!mediaDevicesAvailable()) {
+      // On non-localhost HTTP the API simply doesn't exist — show a clear message
+      // instead of a cryptic "no camera" error.
+      const isLocalhost =
+        location.hostname === "localhost" || location.hostname === "127.0.0.1";
+      if (!isLocalhost) {
+        setHttpsRequired(true);
+        setCallStatus("https-required");
+        return;
+      }
+      setCallStatus("no-camera");
+      return;
+    }
     initializeVideo();
     return () => stopEverything();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -48,13 +75,9 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
     }
   }, [remoteStream]);
 
-  // Re-attach local stream when camera is turned back on
   useEffect(() => {
-    if (!isCameraOff && myVideoRef.current && myStreamRef.current) {
-      myVideoRef.current.srcObject = myStreamRef.current;
-      myVideoRef.current.play().catch(() => {});
-    }
-  }, [isCameraOff]);
+    onRemoteCameraToggle?.((isOff) => setRemoteCameraOff(isOff));
+  }, [onRemoteCameraToggle]);
 
   useEffect(() => {
     onPeerIdReceived((peerId) => {
@@ -139,8 +162,9 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
         return;
       }
 
-      // Bug 7: Pass multiple STUN servers
-      const peer = new Peer({ config: ICE_SERVERS });
+      const iceServers = await fetchIceServers();
+      if (initRunId !== initRunIdRef.current) return;
+      const peer = new Peer({ config: { iceServers } });
       peerRef.current = peer;
 
       peer.on("open", (id) => {
@@ -228,85 +252,136 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived }) {
     const stream = myStreamRef.current;
     if (!stream) return;
 
-    const videoTrack = stream.getVideoTracks()[0];
-    if (!videoTrack) return;
-
     if (!isCameraOff) {
-      // Just disable the track — camera hardware stops, LED turns off immediately
-      videoTrack.enabled = false;
+      stream.getVideoTracks().forEach((t) => t.stop());
+      if (myVideoRef.current) {
+        myVideoRef.current.srcObject = null;
+        myVideoRef.current.load();
+      }
+      emitCameraToggle?.(true);
       setIsCameraOff(true);
     } else {
-      // Re-enable — camera hardware starts, LED turns on
-      videoTrack.enabled = true;
-      setIsCameraOff(false);
+      // Re-request camera — hardware starts again, LED turns on
+      try {
+        const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const newVideoTrack = newStream.getVideoTracks()[0];
+
+        // Remove old (stopped) video tracks and add the new one
+        stream.getVideoTracks().forEach((t) => stream.removeTrack(t));
+        stream.addTrack(newVideoTrack);
+
+        // Replace the track in the active peer call so the remote side sees it
+        if (currentCallRef.current?.peerConnection) {
+          const sender = currentCallRef.current.peerConnection
+            .getSenders()
+            .find((s) => s.track?.kind === "video");
+          if (sender) sender.replaceTrack(newVideoTrack);
+        }
+
+        if (myVideoRef.current) {
+          myVideoRef.current.srcObject = stream;
+          myVideoRef.current.play().catch(() => {});
+        }
+        emitCameraToggle?.(false);
+        setIsCameraOff(false);
+      } catch (err) {
+        console.error("Failed to restart camera:", err);
+      }
     }
   }
 
   return (
     <div className="flex flex-col gap-2">
       {/* Remote video */}
-      <div className="relative bg-gray-800 rounded-lg overflow-hidden aspect-video">
+      <div className="relative bg-[#111118] rounded-xl overflow-hidden aspect-video">
         <video
           ref={remoteVideoRef}
           autoPlay
           playsInline
-          className={`w-full h-full object-cover ${!remoteStream ? "hidden" : ""}`}
+          className={`w-full h-full object-cover ${(!remoteStream || remoteCameraOff) ? "hidden" : ""}`}
         />
 
-        {!remoteStream && (
-          <div className="absolute inset-0 flex items-center justify-center">
+        {(!remoteStream || remoteCameraOff) && (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#111118]">
             <div className="text-center">
-              <div className="text-3xl mb-2">👤</div>
-              <p className="text-gray-500 text-xs">
-                {callStatus === "initializing" && "Starting camera..."}
-                {callStatus === "ready" && "Waiting for other user..."}
-                {callStatus === "connected" && "Connecting stream..."}
-                {callStatus === "error" && "Connection failed"}
-                {callStatus === "no-camera" && "No camera access"}
-                {callStatus === "idle" && "Video off"}
+              <div className="w-12 h-12 rounded-full bg-white/[0.06] flex items-center justify-center mx-auto mb-2">
+                {remoteCameraOff ? <VideoOff size={18} className="text-slate-500" /> : <span className="text-xl">👤</span>}
+              </div>
+              <p className="text-slate-500 text-xs">
+                {remoteCameraOff
+                  ? "Camera is off"
+                  : callStatus === "initializing" ? "Starting camera..."
+                  : callStatus === "ready" ? "Waiting for participant..."
+                  : callStatus === "connected" ? "Connecting..."
+                  : callStatus === "error" ? "Connection failed"
+                  : callStatus === "no-camera" ? "No camera access"
+                  : callStatus === "idle" ? "Video off"
+                  : "HTTPS required"}
               </p>
             </div>
           </div>
         )}
 
-        {/* Local video PiP */}
-        {!isCameraOff ? (
-          <div
-            className="absolute bottom-2 right-2 w-24 rounded-lg overflow-hidden border border-gray-700 bg-gray-900"
-            style={{ height: "72px" }}
-          >
-            <video ref={myVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-          </div>
-        ) : (
-          <div className="absolute bottom-2 right-2 px-2 py-1 bg-gray-900/80 rounded-lg border border-gray-700">
-            <span className="text-gray-500 text-xs">📷 Off</span>
+        {/* Local video PiP — always mounted so ref stays valid */}
+        <div
+          className="absolute bottom-2 right-2 w-20 rounded-lg overflow-hidden border border-white/10 bg-[#0d0d14] shadow-lg"
+          style={{ height: "56px" }}
+        >
+          <video ref={myVideoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
+          {/* Solid overlay covers the frozen frame instantly when camera is off */}
+          {isCameraOff && (
+            <div className="absolute inset-0 bg-[#0d0d14] flex items-center justify-center">
+              <VideoOff size={14} className="text-slate-600" />
+            </div>
+          )}
+        </div>
+
+        {/* Live indicator */}
+        {callStatus === "connected" && (
+          <div className="absolute top-2 left-2 flex items-center gap-1 px-1.5 py-0.5 bg-black/50 rounded-md">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-emerald-400 text-[10px] font-medium">LIVE</span>
           </div>
         )}
       </div>
 
-      {/* Controls */}
-      <div className="flex items-center justify-center gap-2">
+      {/* HTTPS warning banner */}
+      {httpsRequired && (
+        <div className="px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-lg">
+          <p className="text-amber-400 text-xs leading-relaxed">
+            <span className="font-semibold">HTTPS required for video.</span>{" "}
+            Camera access is blocked on plain HTTP outside localhost.
+          </p>
+        </div>
+      )}
+
+      {/* Controls — circular icon buttons like Google Meet */}
+      <div className="flex items-center justify-center gap-3 py-1">
         <button
           onClick={toggleMute}
-          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+          title={isMuted ? "Unmute" : "Mute"}
+          className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
             isMuted
-              ? "bg-red-600 hover:bg-red-700 text-white"
-              : "bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700"
+              ? "bg-rose-600 hover:bg-rose-500 text-white"
+              : "bg-white/[0.08] hover:bg-white/[0.14] text-slate-300"
           }`}
         >
-          {isMuted ? "🔇 Unmute" : "🎤 Mute"}
+          {isMuted ? <MicOff size={16} /> : <Mic size={16} />}
         </button>
 
         <button
           onClick={toggleCamera}
-          className={`px-3 py-2 rounded-lg text-xs font-medium transition-all ${
+          title={isCameraOff ? "Turn on camera" : "Turn off camera"}
+          className={`w-10 h-10 rounded-full flex items-center justify-center transition-all ${
             isCameraOff
-              ? "bg-red-600 hover:bg-red-700 text-white"
-              : "bg-gray-800 hover:bg-gray-700 text-gray-300 border border-gray-700"
+              ? "bg-rose-600 hover:bg-rose-500 text-white"
+              : "bg-white/[0.08] hover:bg-white/[0.14] text-slate-300"
           }`}
         >
-          {isCameraOff ? "📷 Show" : "🎥 Hide"}
+          {isCameraOff ? <VideoOff size={16} /> : <Video size={16} />}
         </button>
+
+
       </div>
     </div>
   );

@@ -93,7 +93,12 @@ export async function requireInterviewOwner(interviewId) {
   const interview = await prisma.interview.findUnique({
     where: { id: interviewId },
     include: {
-      room: { include: { problem: true } },
+      room: {
+        include: {
+          problem: true,
+          problems: { include: { problem: true }, orderBy: { order: "asc" } },
+        },
+      },
       report: true,
     },
   });

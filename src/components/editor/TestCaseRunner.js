@@ -6,6 +6,8 @@ export default function TestCaseRunner({
   testCases,
   code,
   language,
+  roomId,
+  problemIndex = 0,
   onRunComplete,
 }) {
   const [results, setResults] = useState([]);
@@ -14,76 +16,70 @@ export default function TestCaseRunner({
 
   if (!testCases || testCases.length === 0) return null;
 
+  // Candidate path: expected values are stripped from the payload, so we run
+  // tests server-side and receive only pass/fail + actual output.
+  const candidatePath = roomId && testCases.every((tc) => tc.expected === undefined);
+
   async function runTestCases() {
     setRunning(true);
     setResults([]);
-    const newResults = [];
 
+    if (candidatePath) {
+      try {
+        const res = await fetch(`/api/rooms/${roomId}/run-tests`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, language, problemIndex }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setResults([{ testCase: 1, passed: false, input: null, actual: data.error || "Server error", error: true }]);
+          setRunning(false);
+          return;
+        }
+        const newResults = data.results.map((r, i) => ({
+          testCase: i + 1,
+          passed: r.passed,
+          input: testCases[i]?.input,
+          expected: undefined, // never shown to candidate
+          actual: r.actual,
+          error: !!r.error,
+        }));
+        setResults(newResults);
+        if (onRunComplete) onRunComplete({ total: data.total, passed: data.passed, results: newResults });
+      } catch {
+        setResults([{ testCase: 1, passed: false, input: null, actual: "Execution failed", error: true }]);
+      }
+      setRunning(false);
+      return;
+    }
+
+    // Owner / preview path: expected values are present, run client-side.
+    const newResults = [];
     for (let i = 0; i < testCases.length; i++) {
       const tc = testCases[i];
-
       try {
-        // Build code that runs the function with test input
         const wrappedCode = wrapCodeWithTest(code, language, tc);
-
         const res = await fetch("/api/execute", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            code: wrappedCode,
-            language,
-          }),
+          body: JSON.stringify({ code: wrappedCode, language }),
         });
-
         const data = await res.json();
-
         if (!res.ok || data.status === "error") {
-          newResults.push({
-            testCase: i + 1,
-            passed: false,
-            input: tc.input,
-            expected: tc.expected,
-            actual: data.output || "Error",
-            error: true,
-          });
+          newResults.push({ testCase: i + 1, passed: false, input: tc.input, expected: tc.expected, actual: data.output || "Error", error: true });
         } else {
           const actual = data.output?.trim();
-          const passed = normalizedEqual(actual, tc.expected);
-
-          newResults.push({
-            testCase: i + 1,
-            passed,
-            input: tc.input,
-            expected: tc.expected,
-            actual,
-            error: false,
-          });
+          newResults.push({ testCase: i + 1, passed: normalizedEqual(actual, tc.expected), input: tc.input, expected: tc.expected, actual, error: false });
         }
       } catch {
-        newResults.push({
-          testCase: i + 1,
-          passed: false,
-          input: tc.input,
-          expected: tc.expected,
-          actual: "Execution failed",
-          error: true,
-        });
+        newResults.push({ testCase: i + 1, passed: false, input: tc.input, expected: tc.expected, actual: "Execution failed", error: true });
       }
-
-      // Update results progressively
       setResults([...newResults]);
     }
-
     setRunning(false);
-
     const passed = newResults.filter((r) => r.passed).length;
-    if (onRunComplete) {
-      onRunComplete({
-        total: newResults.length,
-        passed,
-        results: newResults,
-      });
-    }
+    if (onRunComplete) onRunComplete({ total: newResults.length, passed, results: newResults });
   }
 
   const passedCount = results.filter((r) => r.passed).length;
@@ -256,15 +252,17 @@ export default function TestCaseRunner({
                     <div>
                       <span className="text-gray-500 text-xs">Input:</span>
                       <pre className="text-gray-300 bg-gray-800/50 p-2 rounded mt-1 text-xs overflow-x-auto">
-                        {JSON.stringify(result.input, null, 2)}
+                        {result.input ? JSON.stringify(result.input, null, 2) : "—"}
                       </pre>
                     </div>
-                    <div>
-                      <span className="text-gray-500 text-xs">Expected:</span>
-                      <pre className="text-blue-300 bg-gray-800/50 p-2 rounded mt-1 text-xs">
-                        {JSON.stringify(result.expected)}
-                      </pre>
-                    </div>
+                    {result.expected !== undefined && (
+                      <div>
+                        <span className="text-gray-500 text-xs">Expected:</span>
+                        <pre className="text-blue-300 bg-gray-800/50 p-2 rounded mt-1 text-xs">
+                          {JSON.stringify(result.expected)}
+                        </pre>
+                      </div>
+                    )}
                     {!result.passed && (
                       <div>
                         <span className="text-gray-500 text-xs">Got:</span>

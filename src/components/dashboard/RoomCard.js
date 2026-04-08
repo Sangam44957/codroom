@@ -58,8 +58,8 @@ export default function RoomCard({ room, onDeleted }) {
   async function confirmDelete() {
     setDeleting(true);
     try {
-      const res = await fetch(`/api/interviews/${room.interview.id}`, { method: "DELETE" });
-      if (res.ok) { setShowConfirm(false); onDeleted?.(room.id); toast.success("Interview deleted"); }
+      const res = await fetch(`/api/rooms?roomId=${room.id}`, { method: "DELETE" });
+      if (res.ok) { setShowConfirm(false); onDeleted?.(room.id); toast.success("Room deleted"); }
       else toast.error("Delete failed.");
     } finally { setDeleting(false); }
   }
@@ -150,18 +150,15 @@ export default function RoomCard({ room, onDeleted }) {
 
         {/* Action row */}
         <div className="flex items-center gap-2 pt-3 border-t border-white/[0.05]">
-          {/* Delete — only if interview exists */}
-          {room.interview && (
-            <button
-              onClick={deleteInterview}
-              disabled={deleting}
-              title="Delete interview"
-              className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 rounded-lg transition-all disabled:opacity-40 flex-shrink-0"
-            >
-              <Trash2 size={12} />
-              {deleting ? "…" : "Delete"}
-            </button>
-          )}
+          <button
+            onClick={deleteInterview}
+            disabled={deleting}
+            title="Delete room"
+            className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 rounded-lg transition-all disabled:opacity-40 flex-shrink-0"
+          >
+            <Trash2 size={12} />
+            {deleting ? "…" : "Delete"}
+          </button>
 
           {/* Invite link */}
           <button

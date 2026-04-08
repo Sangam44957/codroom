@@ -40,11 +40,13 @@ const rateBuckets = new Map(); // socketId -> { event -> { tokens, lastRefill } 
 
 const RATE_LIMITS = {
   //              capacity  refillRate (tokens/sec)
-  "code-change":    { capacity: 30, refillRate: 20 },
-  "send-message":   { capacity: 10, refillRate:  2 },
-  "timeline-event": { capacity: 20, refillRate: 10 },
-  "join-room":      { capacity:  3, refillRate:  1 },
-  "language-change":{ capacity:  5, refillRate:  1 },
+  "code-change":       { capacity: 30, refillRate: 20 },
+  "send-message":      { capacity: 10, refillRate:  2 },
+  "timeline-event":    { capacity: 20, refillRate: 10 },
+  "join-room":         { capacity:  3, refillRate:  1 },
+  "language-change":   { capacity:  5, refillRate:  1 },
+  "whiteboard-draw":   { capacity: 60, refillRate: 40 },
+  "whiteboard-clear":  { capacity:  5, refillRate:  1 },
 };
 
 function isAllowed(socketId, event) {
@@ -78,14 +80,35 @@ function cleanupRateBucket(socketId) {
 async function seedRoomFromDB(roomId) {
   try {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const res = await fetch(`${appUrl}/api/internal/room-owner/${roomId}`, {
-      headers: { "x-internal-secret": process.env.INTERNAL_SECRET || "" },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data; // { createdById, language, lastCode, interviewId }
+    const headers = { "x-internal-secret": process.env.INTERNAL_SECRET || "" };
+
+    const [ownerRes, msgRes] = await Promise.all([
+      fetch(`${appUrl}/api/internal/room-owner/${roomId}`, { headers }),
+      fetch(`${appUrl}/api/rooms/${roomId}/messages?limit=200`, { headers }),
+    ]);
+
+    const data = ownerRes.ok ? await ownerRes.json() : null;
+    const msgData = msgRes.ok ? await msgRes.json() : { messages: [] };
+
+    return { ...(data || {}), persistedMessages: msgData.messages || [] };
   } catch {
     return null;
+  }
+}
+
+async function persistMessage(roomId, message) {
+  try {
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    await fetch(`${appUrl}/api/rooms/${roomId}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": process.env.INTERNAL_SECRET || "",
+      },
+      body: JSON.stringify(message),
+    });
+  } catch (err) {
+    console.error("[chat] persist error:", err.message);
   }
 }
 
@@ -167,9 +190,10 @@ io.on("connection", (socket) => {
         code: dbData?.lastCode || "",
         language: dbData?.language || "javascript",
         users: [],
-        messages: [],
+        messages: dbData?.persistedMessages || [],
         interviewId: dbData?.interviewId || null,
-        events: [], // timeline events
+        events: [],
+        focusMode: false,
       });
     }
 
@@ -194,6 +218,7 @@ io.on("connection", (socket) => {
       messages: room.messages.slice(-200),
       interviewId: room.interviewId,
       events: room.events || [],
+      focusMode: room.focusMode || false,
       isEmptyRoom: room.users.length === 1 && !room.code && !room.interviewId,
     });
 
@@ -212,6 +237,17 @@ io.on("connection", (socket) => {
     room.messages.push(joinMsg);
     if (room.messages.length > 200) room.messages.shift();
     io.to(roomId).emit("chat-message", joinMsg);
+    persistMessage(roomId, joinMsg);
+  });
+
+  // Only interviewers can toggle focus mode
+  socket.on("set-focus-mode", ({ roomId, enabled }) => {
+    if (socket.data.role !== "interviewer") return;
+    const room = rooms.get(roomId);
+    if (!room) return;
+    room.focusMode = !!enabled;
+    io.to(roomId).emit("focus-mode-changed", { enabled: room.focusMode });
+    console.log(`🔒 Focus mode ${room.focusMode ? "ON" : "OFF"} in room ${roomId}`);
   });
 
   // Only authenticated room owners can start interviews
@@ -249,7 +285,7 @@ io.on("connection", (socket) => {
         setTimeout(() => {
           saveSnapshot(room.interviewId, code);
           snapshotTimers.delete(timerKey);
-        }, 3000)
+        }, 1000)
       );
     }
 
@@ -259,7 +295,16 @@ io.on("connection", (socket) => {
   socket.on("language-change", ({ roomId, language }) => {
     if (!isAllowed(socket.id, "language-change")) return;
     const room = rooms.get(roomId);
-    if (room) room.language = language;
+    if (!room) return;
+    room.language = language;
+    // Persist as a timeline event so playback can replay language switches
+    if (room.interviewId) {
+      const e = { type: "language_change", label: language, timestamp: new Date().toISOString() };
+      room.events = room.events || [];
+      room.events.push(e);
+      if (room.events.length > 500) room.events.shift();
+      saveEvent(room.interviewId, e.type, e.label);
+    }
     socket.to(roomId).emit("language-update", { language });
   });
 
@@ -296,6 +341,24 @@ io.on("connection", (socket) => {
     saveEvent(room.interviewId, e.type, e.label);
   });
 
+  socket.on("whiteboard-draw", ({ roomId, stroke }) => {
+    if (!isAllowed(socket.id, "whiteboard-draw")) return;
+    const room = rooms.get(roomId);
+    if (!room) return;
+    socket.to(roomId).emit("whiteboard-draw", { stroke });
+  });
+
+  socket.on("whiteboard-clear", ({ roomId }) => {
+    if (!isAllowed(socket.id, "whiteboard-clear")) return;
+    const room = rooms.get(roomId);
+    if (!room) return;
+    io.to(roomId).emit("whiteboard-clear");
+  });
+
+  socket.on("camera-toggle", ({ roomId, isOff }) => {
+    socket.to(roomId).emit("remote-camera-toggle", { isOff });
+  });
+
   socket.on("send-message", ({ roomId, text }) => {
     if (!isAllowed(socket.id, "send-message")) return;
     const room = rooms.get(roomId);
@@ -316,6 +379,7 @@ io.on("connection", (socket) => {
     room.messages.push(message);
     if (room.messages.length > 200) room.messages.shift();
     io.to(roomId).emit("chat-message", message);
+    persistMessage(roomId, message);
   });
 
   socket.on("disconnect", () => {
@@ -341,6 +405,7 @@ io.on("connection", (socket) => {
       room.messages.push(leaveMsg);
       if (room.messages.length > 200) room.messages.shift();
       io.to(roomId).emit("chat-message", leaveMsg);
+      persistMessage(roomId, leaveMsg);
 
       console.log(`👤 ${user.name} left room: ${roomId}`);
 

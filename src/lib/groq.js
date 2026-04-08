@@ -7,16 +7,14 @@ const groq = new Groq({
 export async function evaluateCode({
   code,
   language,
-  problemTitle,
-  problemDescription,
+  problems,
   duration,
   testResults,
 }) {
   const prompt = buildEvaluationPrompt({
     code,
     language,
-    problemTitle,
-    problemDescription,
+    problems,
     duration,
     testResults,
   });
@@ -56,12 +54,17 @@ You MUST respond with valid JSON only. No markdown, no explanation outside the J
 function buildEvaluationPrompt({
   code,
   language,
-  problemTitle,
-  problemDescription,
+  problems,
   duration,
   testResults,
 }) {
   const durationMinutes = duration ? Math.round(duration / 60) : "unknown";
+
+  const problemSection = problems?.length
+    ? problems.map((p, i) =>
+        `### Problem ${i + 1}: ${p.title}\n${p.description || ""}`
+      ).join("\n\n")
+    : "Free coding (no specific problem)";
 
   const testSection = testResults
     ? `\n## Test Results (from automated runner)\nPassed: ${testResults.passed}/${testResults.total}\n${testResults.results?.map((r, i) => `Test ${i+1}: ${r.passed ? "PASSED" : `FAILED — expected ${JSON.stringify(r.expected)}, got ${r.actual}`}`).join("\n") || ""}\n\nIMPORTANT: The automated test results above are ground truth. Base your correctness score primarily on these results, not your own interpretation of the code.`
@@ -70,9 +73,9 @@ function buildEvaluationPrompt({
   return `
 Evaluate this coding interview submission.
 
-## Problem
-Title: ${problemTitle || "Free coding (no specific problem)"}
-${problemDescription ? `Description:\n${problemDescription}` : ""}${testSection}
+## Problems
+${problemSection}
+${testSection}
 
 ## Submission
 Language: ${language}
@@ -146,7 +149,7 @@ function validateEvaluation(evaluation) {
     timeComplexity: evaluation.timeComplexity || "Unknown",
     spaceComplexity: evaluation.spaceComplexity || "Unknown",
     edgeCaseHandling: clamp(evaluation.edgeCaseHandling || 5, 1, 10),
-    overallScore: clamp(evaluation.overallScore || 50, 1, 100),
+    overallScore: clamp(evaluation.overallScore ?? 50, 1, 100),
     recommendation: validateRecommendation(evaluation.recommendation),
     summary: evaluation.summary || "No summary available.",
     improvements: evaluation.improvements || "No specific improvements noted.",

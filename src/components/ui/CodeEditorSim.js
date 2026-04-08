@@ -69,19 +69,21 @@ export default function CodeEditorSim() {
   const [revealed, setRevealed] = useState(0);
   const [showOutput, setShowOutput] = useState(false);
   const [outputLines, setOutputLines] = useState(0);
-  const [done, setDone] = useState(false);
   const editorRef = useRef(null);
 
   const chars = useMemo(() =>
     SEGMENTS.flatMap((seg) => seg.text.split("").map((char) => ({ char, color: seg.color }))),
   []);
 
+  const done = revealed >= chars.length;
+
   // Type characters
   useEffect(() => {
-    if (revealed >= chars.length) { setDone(true); return; }
-    const t = setTimeout(() => setRevealed((p) => p + 1), Math.random() * 18 + 12);
+    if (done) return;
+    const delay = Math.random() * 18 + 12;
+    const t = setTimeout(() => setRevealed((p) => p + 1), delay);
     return () => clearTimeout(t);
-  }, [revealed, chars.length]);
+  }, [revealed, done]);
 
   // Show output after done
   useEffect(() => {
@@ -90,10 +92,13 @@ export default function CodeEditorSim() {
     return () => clearTimeout(t);
   }, [done]);
 
-  // Reveal output lines
+  // Reveal output lines one at a time
   useEffect(() => {
     if (!showOutput || outputLines >= OUTPUT_LINES.length) return;
-    const t = setTimeout(() => setOutputLines((p) => p + 1), outputLines === 0 ? 0 : 300);
+    const t = setTimeout(
+      () => setOutputLines((p) => p + 1),
+      outputLines === 0 ? 0 : 300,
+    );
     return () => clearTimeout(t);
   }, [showOutput, outputLines]);
 

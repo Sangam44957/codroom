@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
 import { verifyPassword, createToken, setAuthCookie } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
+import { checkCsrf } from "@/lib/csrf";
 
 export async function POST(request) {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
   const ip =
     request.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
     request.headers.get("x-real-ip") ||
@@ -25,7 +28,7 @@ export async function POST(request) {
       return NextResponse.json({ error: "Email and password are required" }, { status: 400 });
     }
 
-    const user = await prisma.user.findUnique({ where: { email } });
+    const user = await prisma.user.findUnique({ where: { email: email.trim().toLowerCase() } });
 
     if (!user) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
@@ -36,12 +39,19 @@ export async function POST(request) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
     }
 
+    if (!user.emailVerified) {
+      return NextResponse.json(
+        { error: "Please verify your email before signing in. Check your inbox for the verification link.", needsVerification: true },
+        { status: 403 }
+      );
+    }
+
     const token = await createToken({ userId: user.id, email: user.email, name: user.name });
     await setAuthCookie(token);
 
     return NextResponse.json(
       { message: "Login successful", user: { id: user.id, name: user.name, email: user.email } },
-      { status: 200 }
+      { status: 200, headers: { "Cache-Control": "no-store" } }
     );
   } catch (error) {
     console.error("Login error:", error);

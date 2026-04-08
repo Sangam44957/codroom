@@ -21,14 +21,20 @@ export const POST = withAuthz(async (request, { params }) => {
     );
   }
 
-  // Run test cases server-side to give AI ground-truth results
+  // Resolve ordered problems (fall back to legacy single problem)
+  const allProblems = interview.room.problems?.length
+    ? interview.room.problems.map((rp) => rp.problem)
+    : interview.room.problem ? [interview.room.problem] : [];
+
+  // Run test cases against the first problem (primary submission context)
   let testResults = null;
-  if (interview.room.problem?.testCases?.length) {
+  const primaryProblem = allProblems[0] || null;
+  if (primaryProblem?.testCases?.length) {
     try {
       testResults = await runTestsForReport(
         interview.finalCode,
         interview.language,
-        interview.room.problem.testCases
+        primaryProblem.testCases
       );
     } catch (e) {
       console.warn("[report] Test runner failed, proceeding without results:", e.message);
@@ -38,8 +44,7 @@ export const POST = withAuthz(async (request, { params }) => {
   const evaluation = await evaluateCode({
     code: interview.finalCode,
     language: interview.language,
-    problemTitle: interview.room.problem?.title,
-    problemDescription: interview.room.problem?.description,
+    problems: allProblems,
     duration: interview.duration,
     testResults,
   });
