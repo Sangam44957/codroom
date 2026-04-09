@@ -90,7 +90,7 @@ function VerifyOtpContent() {
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error); return; }
-      router.push("/login?verified=1");
+      router.push("/dashboard");
     } catch {
       setError("Something went wrong. Try again.");
     } finally {
