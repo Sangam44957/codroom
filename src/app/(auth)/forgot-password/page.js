@@ -52,7 +52,7 @@ export default function ForgotPasswordPage() {
         <div className="bg-white/[0.03] border border-white/[0.07] rounded-2xl p-8">
           <div className="mb-6">
             <h2 className="text-xl font-bold text-white mb-1">Forgot your password?</h2>
-            <p className="text-slate-500 text-sm">Enter your email and we'll send a 6-digit reset code.</p>
+            <p className="text-slate-500 text-sm">Enter your email and we&apos;ll send a 6-digit reset code.</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">

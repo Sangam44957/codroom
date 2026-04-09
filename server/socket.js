@@ -3,10 +3,8 @@ const { Server } = require("socket.io");
 const { jwtVerify } = require("jose");
 const path = require("path");
 
-// Next.js loads .env automatically, but this standalone Node process does not.
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
-// Fail fast — crash immediately if required secrets are missing
 const REQUIRED_ENV = ["JWT_SECRET", "INTERNAL_SECRET", "DATABASE_URL"];
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) {
@@ -14,6 +12,10 @@ for (const key of REQUIRED_ENV) {
     process.exit(1);
   }
 }
+
+// ── Import services directly — no HTTP-back-to-self ──────────────────────────
+const { getRoomOwnerData, getMessages, persistMessage } = require("./room.service");
+const { saveSnapshot, saveEvent } = require("./interview.service");
 
 const httpServer = createServer();
 const io = new Server(httpServer, {
@@ -25,8 +27,6 @@ const io = new Server(httpServer, {
 });
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
-
-// INTERNAL_SECRET is guaranteed present by startup validation above
 const COOKIE_NAME = "codroom-token";
 
 // In-memory room state
@@ -34,29 +34,26 @@ const rooms = new Map();
 const snapshotTimers = new Map();
 
 // ─── Per-socket rate limiter ──────────────────────────────────────────────────
-// Token-bucket: each bucket refills at `refillRate` tokens/sec up to `capacity`.
-// Returns true if the event is allowed, false if it should be dropped.
-const rateBuckets = new Map(); // socketId -> { event -> { tokens, lastRefill } }
+const rateBuckets = new Map();
 
 const RATE_LIMITS = {
-  //              capacity  refillRate (tokens/sec)
-  "code-change":       { capacity: 30, refillRate: 20 },
-  "send-message":      { capacity: 10, refillRate:  2 },
-  "timeline-event":    { capacity: 20, refillRate: 10 },
-  "join-room":         { capacity:  3, refillRate:  1 },
-  "language-change":   { capacity:  5, refillRate:  1 },
-  "whiteboard-draw":   { capacity: 60, refillRate: 40 },
-  "whiteboard-clear":  { capacity:  5, refillRate:  1 },
+  "code-change":      { capacity: 30, refillRate: 20 },
+  "send-message":     { capacity: 10, refillRate:  2 },
+  "timeline-event":   { capacity: 20, refillRate: 10 },
+  "join-room":        { capacity:  3, refillRate:  1 },
+  "language-change":  { capacity:  5, refillRate:  1 },
+  "whiteboard-draw":  { capacity: 60, refillRate: 40 },
+  "whiteboard-clear": { capacity:  5, refillRate:  1 },
 };
 
 function isAllowed(socketId, event) {
   const limits = RATE_LIMITS[event];
-  if (!limits) return true; // no limit defined — allow
+  if (!limits) return true;
 
   if (!rateBuckets.has(socketId)) rateBuckets.set(socketId, {});
   const buckets = rateBuckets.get(socketId);
-
   const now = Date.now();
+
   if (!buckets[event]) {
     buckets[event] = { tokens: limits.capacity, lastRefill: now };
   }
@@ -76,54 +73,34 @@ function cleanupRateBucket(socketId) {
 }
 
 // ─── Seed room state from DB on first join ────────────────────────────────────
-
 async function seedRoomFromDB(roomId) {
   try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const headers = { "x-internal-secret": process.env.INTERNAL_SECRET || "" };
-
-    const [ownerRes, msgRes] = await Promise.all([
-      fetch(`${appUrl}/api/internal/room-owner/${roomId}`, { headers }),
-      fetch(`${appUrl}/api/rooms/${roomId}/messages?limit=200`, { headers }),
+    const [data, messages] = await Promise.all([
+      getRoomOwnerData(roomId),
+      getMessages(roomId, 200),
     ]);
-
-    const data = ownerRes.ok ? await ownerRes.json() : null;
-    const msgData = msgRes.ok ? await msgRes.json() : { messages: [] };
-
-    return { ...(data || {}), persistedMessages: msgData.messages || [] };
+    const lastCode = data?.interview?.snapshots?.[0]?.code || "";
+    const interviewId = data?.interview?.status === "in_progress" ? data.interview.id : null;
+    return {
+      createdById: data?.createdById || null,
+      language: data?.language || "javascript",
+      lastCode,
+      interviewId,
+      persistedMessages: messages || [],
+    };
   } catch {
     return null;
   }
 }
 
-async function persistMessage(roomId, message) {
-  try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    await fetch(`${appUrl}/api/rooms/${roomId}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": process.env.INTERNAL_SECRET || "",
-      },
-      body: JSON.stringify(message),
-    });
-  } catch (err) {
-    console.error("[chat] persist error:", err.message);
-  }
-}
-
 // ─── Auth middleware ──────────────────────────────────────────────────────────
-
 io.use(async (socket, next) => {
   try {
-    // Try cookie first (browser clients send it automatically)
     const cookieHeader = socket.handshake.headers.cookie || "";
     const cookieMatch = cookieHeader.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
     const token = cookieMatch?.[1] || socket.handshake.auth?.token;
 
     if (!token) {
-      // Allow unauthenticated connections but mark them as guests
-      // Guests can join as candidates — they just can't perform owner actions
       socket.data.user = null;
       socket.data.isAuthenticated = false;
       return next();
@@ -134,8 +111,6 @@ io.use(async (socket, next) => {
     socket.data.isAuthenticated = true;
     next();
   } catch {
-    // Invalid token — treat as guest, not hard reject
-    // (candidates may not have accounts)
     socket.data.user = null;
     socket.data.isAuthenticated = false;
     next();
@@ -143,23 +118,16 @@ io.use(async (socket, next) => {
 });
 
 // ─── Room ownership lookup ────────────────────────────────────────────────────
-
 async function getRoomOwnerIdFromDB(roomId) {
   try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const res = await fetch(`${appUrl}/api/internal/room-owner/${roomId}`, {
-      headers: { "x-internal-secret": process.env.INTERNAL_SECRET || "" },
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.createdById || null;
+    const data = await getRoomOwnerData(roomId);
+    return data?.createdById || null;
   } catch {
     return null;
   }
 }
 
 // ─── Connection handler ───────────────────────────────────────────────────────
-
 io.on("connection", (socket) => {
   console.log(`✅ Socket connected: ${socket.id} | auth: ${socket.data.isAuthenticated}`);
 
@@ -167,10 +135,7 @@ io.on("connection", (socket) => {
     if (!roomId || !userName) return;
     if (!isAllowed(socket.id, "join-room")) return;
 
-    // Derive authoritative role server-side — never trust client-supplied role
-    // for permission decisions. Client role is only used for display.
     let authoritativeRole = "candidate";
-
     if (socket.data.isAuthenticated && socket.data.user) {
       const ownerId = await getRoomOwnerIdFromDB(roomId);
       if (ownerId && ownerId === socket.data.user.userId) {
@@ -181,7 +146,6 @@ io.on("connection", (socket) => {
     socket.data.roomId = roomId;
     socket.data.userName = userName;
     socket.data.role = authoritativeRole;
-
     socket.join(roomId);
 
     if (!rooms.has(roomId)) {
@@ -199,7 +163,6 @@ io.on("connection", (socket) => {
 
     const room = rooms.get(roomId);
 
-    // Upsert user — handle reconnects
     const existingIdx = room.users.findIndex(
       (u) => u.name === userName && u.role === authoritativeRole
     );
@@ -237,10 +200,11 @@ io.on("connection", (socket) => {
     room.messages.push(joinMsg);
     if (room.messages.length > 200) room.messages.shift();
     io.to(roomId).emit("chat-message", joinMsg);
-    persistMessage(roomId, joinMsg);
+    persistMessage(roomId, joinMsg).catch((err) =>
+      console.error("[chat] persist error:", err.message)
+    );
   });
 
-  // Only interviewers can toggle focus mode
   socket.on("set-focus-mode", ({ roomId, enabled }) => {
     if (socket.data.role !== "interviewer") return;
     const room = rooms.get(roomId);
@@ -250,9 +214,8 @@ io.on("connection", (socket) => {
     console.log(`🔒 Focus mode ${room.focusMode ? "ON" : "OFF"} in room ${roomId}`);
   });
 
-  // Only authenticated room owners can start interviews
   socket.on("set-interview-id", ({ roomId, interviewId }) => {
-    if (socket.data.role !== "interviewer") return; // silently ignore
+    if (socket.data.role !== "interviewer") return;
     const room = rooms.get(roomId);
     if (room) {
       room.interviewId = interviewId;
@@ -297,7 +260,6 @@ io.on("connection", (socket) => {
     const room = rooms.get(roomId);
     if (!room) return;
     room.language = language;
-    // Persist as a timeline event so playback can replay language switches
     if (room.interviewId) {
       const e = { type: "language_change", label: language, timestamp: new Date().toISOString() };
       room.events = room.events || [];
@@ -309,7 +271,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("code-output", ({ roomId, output }) => {
-    // Only authenticated users in the room can relay output.
     if (!socket.data.isAuthenticated) return;
     const room = rooms.get(roomId);
     if (!room) return;
@@ -337,7 +298,6 @@ io.on("connection", (socket) => {
     room.events.push(e);
     if (room.events.length > 500) room.events.shift();
     io.to(roomId).emit("timeline-event", e);
-    // Persist to DB
     saveEvent(room.interviewId, e.type, e.label);
   });
 
@@ -364,7 +324,6 @@ io.on("connection", (socket) => {
     const room = rooms.get(roomId);
     if (!room || !text?.trim()) return;
 
-    // Use server-derived identity — never trust client-supplied sender/role
     const sender = socket.data.userName || "Anonymous";
     const role = socket.data.role || "candidate";
 
@@ -372,14 +331,16 @@ io.on("connection", (socket) => {
       id: `${Date.now()}-${socket.id}`,
       sender,
       role,
-      text: text.trim().slice(0, 2000), // cap message length
+      text: text.trim().slice(0, 2000),
       timestamp: new Date().toISOString(),
     };
 
     room.messages.push(message);
     if (room.messages.length > 200) room.messages.shift();
     io.to(roomId).emit("chat-message", message);
-    persistMessage(roomId, message);
+    persistMessage(roomId, message).catch((err) =>
+      console.error("[chat] persist error:", err.message)
+    );
   });
 
   socket.on("disconnect", () => {
@@ -392,7 +353,6 @@ io.on("connection", (socket) => {
 
       const user = room.users[idx];
       room.users.splice(idx, 1);
-
       io.to(roomId).emit("user-left", { user, users: room.users });
 
       const leaveMsg = {
@@ -405,7 +365,9 @@ io.on("connection", (socket) => {
       room.messages.push(leaveMsg);
       if (room.messages.length > 200) room.messages.shift();
       io.to(roomId).emit("chat-message", leaveMsg);
-      persistMessage(roomId, leaveMsg);
+      persistMessage(roomId, leaveMsg).catch((err) =>
+        console.error("[chat] persist error:", err.message)
+      );
 
       console.log(`👤 ${user.name} left room: ${roomId}`);
 
@@ -422,48 +384,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// ─── Snapshot persistence ─────────────────────────────────────────────────────
-
-async function saveSnapshot(interviewId, code) {
-  try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const res = await fetch(`${appUrl}/api/interviews/${interviewId}/snapshots`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": process.env.INTERNAL_SECRET || "",
-      },
-      body: JSON.stringify({ code }),
-    });
-    if (res.ok) {
-      console.log(`📸 Snapshot saved for interview ${interviewId}`);
-    } else {
-      const data = await res.json().catch(() => ({}));
-      console.error(`[snapshot] Failed: ${data.error || res.status}`);
-    }
-  } catch (err) {
-    console.error("[snapshot] Fetch error:", err.message);
-  }
-}
-
-async function saveEvent(interviewId, type, label) {
-  try {
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    await fetch(`${appUrl}/api/interviews/${interviewId}/events`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": process.env.INTERNAL_SECRET || "",
-      },
-      body: JSON.stringify({ type, label }),
-    });
-  } catch (err) {
-    console.error("[event] Fetch error:", err.message);
-  }
-}
-
-// ─── Startup with port conflict handling ─────────────────────────────────────
-
+// ─── Startup ──────────────────────────────────────────────────────────────────
 const PORT = parseInt(process.env.SOCKET_PORT || "3001", 10);
 
 httpServer.on("error", (err) => {
@@ -480,6 +401,5 @@ httpServer.listen(PORT, () => {
   console.log(`\n🚀 Socket.io server running on http://localhost:${PORT}\n`);
 });
 
-// Graceful shutdown
 process.on("SIGTERM", () => { httpServer.close(() => process.exit(0)); });
 process.on("SIGINT",  () => { httpServer.close(() => process.exit(0)); });

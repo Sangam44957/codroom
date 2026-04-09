@@ -1,32 +1,22 @@
 import { NextResponse } from "next/server";
 import { SignJWT } from "jose";
-import prisma from "@/lib/db";
+import { validateJoinToken } from "@/services/room.service";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
-const TICKET_TTL_SECONDS = 14400; // 4 hours — covers a full interview session
+const TICKET_TTL_SECONDS = 14400;
 
 export async function POST(request, { params }) {
   const { roomId } = await params;
   const body = await request.json().catch(() => ({}));
   const { joinToken, candidateName } = body;
 
-  if (!joinToken) {
-    return NextResponse.json({ error: "joinToken required" }, { status: 400 });
-  }
+  if (!joinToken) return NextResponse.json({ error: "joinToken required" }, { status: 400 });
 
-  const room = await prisma.room.findUnique({
-    where: { id: roomId },
-    select: { id: true, joinToken: true, candidateName: true },
-  });
+  const room = await validateJoinToken(roomId, joinToken);
+  if (!room) return NextResponse.json({ error: "Invalid invite link" }, { status: 403 });
 
-  if (!room || room.joinToken !== joinToken) {
-    return NextResponse.json({ error: "Invalid invite link" }, { status: 403 });
-  }
-
-  // If the room has a pre-set candidateName, use it; otherwise use what was submitted
   const resolvedName = room.candidateName?.trim() || candidateName?.trim() || null;
 
-  // Issue a short-lived signed ticket scoped to this room
   const ticket = await new SignJWT({ roomId, type: "room-session", candidateName: resolvedName })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime(`${TICKET_TTL_SECONDS}s`)
@@ -41,6 +31,5 @@ export async function POST(request, { params }) {
     maxAge: TICKET_TTL_SECONDS,
     path: `/api/rooms/${roomId}`,
   });
-
   return response;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, Suspense } from "react";
+import { useState, useRef, useEffect, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
@@ -78,7 +78,7 @@ function VerifyOtpContent() {
     return () => clearInterval(timerRef.current);
   }, []);
 
-  async function handleSubmit(e) {
+  const handleSubmit = useCallback(async (e) => {
     e?.preventDefault();
     if (otp.length !== 6) { setError("Enter the 6-digit code"); return; }
     setLoading(true); setError("");
@@ -96,12 +96,11 @@ function VerifyOtpContent() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [email, otp, router]);
 
-  // Auto-submit when all 6 digits entered
   useEffect(() => {
     if (otp.length === 6) handleSubmit();
-  }, [otp]);
+  }, [otp, handleSubmit]);
 
   async function handleResend() {
     if (resending || countdown > 0) return;
@@ -185,7 +184,7 @@ function VerifyOtpContent() {
 
           <div className="text-center mt-6">
             <p className="text-slate-500 text-sm">
-              Didn't receive it?{" "}
+              Didn&apos;t receive it?{" "}
               {countdown > 0 ? (
                 <span className="text-slate-600">Resend in {countdown}s</span>
               ) : (

@@ -1,28 +1,18 @@
 import { NextResponse } from "next/server";
 import { jwtVerify } from "jose";
-import prisma from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
-import { runTestsForReport } from "@/lib/testRunner";
 import { rateLimit } from "@/lib/rateLimit";
 import { withAuthz } from "@/lib/authz";
+import { runTestsForReport } from "@/lib/testRunner";
+import { getRoomById } from "@/services/room.service";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
-// Candidate-safe test runner: executes tests server-side and returns
-// pass/fail + actual output — never leaks expected values to the client.
 export const POST = withAuthz(async (request, { params }) => {
   const { roomId } = await params;
 
-  // Auth: room owner OR valid room-session ticket
   const user = await getCurrentUser();
-  const room = await prisma.room.findUnique({
-    where: { id: roomId },
-    include: {
-      problem: true,
-      problems: { include: { problem: true }, orderBy: { order: "asc" } },
-    },
-  });
-
+  const room = await getRoomById(roomId);
   if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
 
   const isOwner = user && room.createdById === user.userId;
@@ -37,7 +27,6 @@ export const POST = withAuthz(async (request, { params }) => {
     }
   }
 
-  // Rate-limit by roomId (shared across all participants in the room)
   const rl = await rateLimit("run-tests", roomId, { limit: 20, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
@@ -62,7 +51,6 @@ export const POST = withAuthz(async (request, { params }) => {
 
   const { total, passed, results } = await runTestsForReport(code, language, problem.testCases);
 
-  // Strip expected from results before sending to client
   return NextResponse.json({
     total,
     passed,

@@ -205,7 +205,7 @@ function ResetForm() {
 
           <div className="text-center mt-5">
             <p className="text-slate-500 text-sm">
-              Didn't receive it?{" "}
+              Didn&apos;t receive it?{" "}
               {countdown > 0 ? (
                 <span className="text-slate-600">Resend in {countdown}s</span>
               ) : (

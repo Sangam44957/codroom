@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import { randomInt } from "crypto";
-import prisma from "@/lib/db";
-import { sendPasswordResetEmail } from "@/lib/email";
 import { rateLimit } from "@/lib/rateLimit";
+import { forgotPassword } from "@/services/auth.service";
 
 export async function POST(request) {
   try {
@@ -24,23 +22,8 @@ export async function POST(request) {
       return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 
-    const user = await prisma.user.findUnique({
-      where: { email: email.trim().toLowerCase() },
-    });
-
-    if (user) {
-      const otp = String(randomInt(100000, 999999));
-      const expiry = new Date(Date.now() + 10 * 60 * 1000);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { resetOtp: otp, resetOtpExpiry: expiry },
-      });
-      await sendPasswordResetEmail(user.email, otp).catch((err) =>
-        console.error("[forgot-password] email error:", err.message)
-      );
-    }
-
-    return NextResponse.json({ message: "ok" }, { status: 200 });
+    const result = await forgotPassword(email);
+    return NextResponse.json({ message: result.message }, { status: 200 });
   } catch (err) {
     console.error("[forgot-password] unexpected error:", err);
     return NextResponse.json({ error: "Something went wrong. Please try again." }, { status: 500 });
