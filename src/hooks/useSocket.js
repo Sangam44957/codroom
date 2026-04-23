@@ -11,6 +11,7 @@ export default function useSocket(roomId, userName, role) {
   const hasConnectedOnceRef = useRef(false);
   const reconnectDetectedRef = useRef(false);
   const [isConnected, setIsConnected] = useState(false);
+  const [isJoined, setIsJoined] = useState(false);
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [serverStateLost, setServerStateLost] = useState(false);
@@ -87,12 +88,14 @@ export default function useSocket(roomId, userName, role) {
 
     socket.on("join-error", ({ message }) => {
       toast.error(`Room error: ${message}`, { id: "socket-join-error" });
+      setIsJoined(false);
     });
 
     socket.on("room-state", ({ code, language, users, messages, interviewId, events, focusMode, timerEndsAt, isEmptyRoom }) => {
       setUsers(users || []);
       setMessages(messages?.slice(-MAX_MESSAGES) || []);
       setTimelineEvents(events || []);
+      setIsJoined(true); // Successfully joined room
 
       toast.dismiss("socket-disconnect");
       toast.dismiss("socket-connect-error");
@@ -153,6 +156,7 @@ export default function useSocket(roomId, userName, role) {
       socket.disconnect();
       socketRef.current = null;
       setIsConnected(false);
+      setIsJoined(false);
       setUsers([]);
       setMessages([]);
       setServerStateLost(false);
@@ -304,7 +308,7 @@ export default function useSocket(roomId, userName, role) {
   }, []);
 
   return {
-    isConnected,
+    isConnected: isConnected && isJoined,
     serverStateLost,
     users,
     messages,
