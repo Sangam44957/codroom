@@ -8,7 +8,7 @@ const DIFF_CLS = {
   hard:   "text-rose-400 bg-rose-500/10 border-rose-500/20",
 };
 
-export default function ProblemPanel({ problem }) {
+export default function ProblemPanel({ problem, isCandidate = false }) {
   const [activeTab, setActiveTab] = useState("description");
   if (!problem) return null;
   const testCases = problem.testCases || [];
@@ -74,12 +74,14 @@ export default function ProblemPanel({ problem }) {
                       {JSON.stringify(tc.input, null, 2)}
                     </pre>
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-600 uppercase tracking-widest block mb-1">Expected</span>
-                    <pre className="text-xs text-cyan-300 bg-black/30 border border-white/[0.05] rounded-lg p-2 overflow-x-auto font-mono">
-                      {JSON.stringify(tc.expected, null, 2)}
-                    </pre>
-                  </div>
+                  {!isCandidate && tc.expected !== undefined && (
+                    <div>
+                      <span className="text-[10px] text-slate-600 uppercase tracking-widest block mb-1">Expected</span>
+                      <pre className="text-xs text-cyan-300 bg-black/30 border border-white/[0.05] rounded-lg p-2 overflow-x-auto font-mono">
+                        {JSON.stringify(tc.expected, null, 2)}
+                      </pre>
+                    </div>
+                  )}
                 </div>
               </div>
             ))}

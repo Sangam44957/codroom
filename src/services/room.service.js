@@ -9,6 +9,8 @@ import {
   createMessage,
 } from "@/repositories/room.repository";
 import { findInterviewByRoomId, createInterview } from "@/repositories/interview.repository";
+import { incrementUsageCount } from "@/repositories/problem.repository";
+import { assertEnum, ROOM_STATUS } from "@/lib/enums";
 
 const PAGE_LIMIT = 12;
 
@@ -40,18 +42,23 @@ export async function listRooms(userId, page) {
   return { rooms, total, page, totalPages: Math.ceil(total / PAGE_LIMIT) };
 }
 
-export async function createNewRoom({ title, candidateName, language, problemId, problemIds }, userId) {
+export async function createNewRoom({ title, candidateName, language, problemId, problemIds, pipelineId }, userId) {
   const ids = problemIds?.length ? problemIds : problemId ? [problemId] : [];
-  return createRoom({
+  const room = await createRoom({
     title: title.trim(),
     candidateName: candidateName?.trim() || null,
     language: language || "javascript",
     createdById: userId,
     problemId: ids[0] || null,
+    pipelineId: pipelineId || null,
     problems: ids.length
       ? { create: ids.map((pid, i) => ({ problemId: pid, order: i })) }
       : undefined,
   });
+  if (ids.length) {
+    await Promise.all(ids.map((id) => incrementUsageCount(id).catch(() => {})));
+  }
+  return room;
 }
 
 export async function deleteRoom(roomId, userId) {
@@ -99,5 +106,6 @@ export async function getOrCreateInterviewForNotes(roomId) {
 }
 
 export async function updateRoomStatus(roomId, status) {
+  assertEnum(status, ROOM_STATUS, "room status");
   return updateRoom(roomId, { status });
 }

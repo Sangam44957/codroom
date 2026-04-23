@@ -98,3 +98,64 @@ export async function sendPasswordResetEmail(email, otp) {
     `,
   });
 }
+
+// ── Interview notification templates ─────────────────────────────────────────
+
+const HEADER = `<div style="background:linear-gradient(135deg,#7c3aed,#06b6d4);padding:20px 24px;border-radius:8px 8px 0 0"><span style="color:#fff;font-size:18px;font-weight:900;letter-spacing:-0.5px">CodRoom</span></div>`;
+const FOOTER = `<div style="padding:16px 24px;text-align:center;font-size:12px;color:#9ca3af;border-top:1px solid #f3f4f6">CodRoom Technical Interview Platform</div>`;
+
+export async function notifyReportReady({ interviewerEmail, candidateName, reportUrl }) {
+  const name = candidateName || "your candidate";
+  return sendEmail({
+    to: interviewerEmail,
+    subject: `Interview Report Ready — ${candidateName || "Candidate"}`,
+    html: `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto">
+        ${HEADER}
+        <div style="padding:28px 24px;background:#fff;border:1px solid #e5e7eb;border-top:none">
+          <p style="font-size:15px;color:#1f2937;margin:0 0 20px">The AI evaluation report for <strong>${name}</strong> is ready to review.</p>
+          <a href="${reportUrl}" style="display:inline-block;background:#7c3aed;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">View Report</a>
+          <p style="font-size:12px;color:#9ca3af;margin:20px 0 0">You can also download a PDF from the report page.</p>
+        </div>
+        ${FOOTER}
+      </div>`,
+  });
+}
+
+export async function notifyCandidateJoined({ interviewerEmail, candidateName, roomName, roomUrl }) {
+  const name = candidateName || "A candidate";
+  return sendEmail({
+    to: interviewerEmail,
+    subject: `${name} joined ${roomName}`,
+    html: `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto">
+        ${HEADER}
+        <div style="padding:28px 24px;background:#fff;border:1px solid #e5e7eb;border-top:none">
+          <p style="font-size:15px;color:#1f2937;margin:0 0 20px"><strong>${name}</strong> has joined <strong>${roomName}</strong> and is waiting for you.</p>
+          <a href="${roomUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">Join Room Now</a>
+        </div>
+        ${FOOTER}
+      </div>`,
+  });
+}
+
+export async function notifyReportShared({ recipientEmail, sharedByName, candidateName, shareUrl, expiresAt }) {
+  const name = candidateName || "a candidate";
+  const expiry = expiresAt
+    ? `This link expires on ${new Date(expiresAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}.`
+    : "";
+  return sendEmail({
+    to: recipientEmail,
+    subject: `Interview Report Shared — ${candidateName || "Candidate"}`,
+    html: `
+      <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto">
+        ${HEADER}
+        <div style="padding:28px 24px;background:#fff;border:1px solid #e5e7eb;border-top:none">
+          <p style="font-size:15px;color:#1f2937;margin:0 0 20px"><strong>${sharedByName}</strong> shared an interview report for <strong>${name}</strong> with you.</p>
+          <a href="${shareUrl}" style="display:inline-block;background:#7c3aed;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600;font-size:14px">View Report</a>
+          ${expiry ? `<p style="font-size:12px;color:#9ca3af;margin:20px 0 0">${expiry}</p>` : ""}
+        </div>
+        ${FOOTER}
+      </div>`,
+  });
+}

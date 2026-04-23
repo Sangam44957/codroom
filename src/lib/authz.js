@@ -150,7 +150,17 @@ export function withAuthz(handler) {
       return await handler(request, context);
     } catch (err) {
       if (err instanceof NextResponse) return err;
-      console.error("[authz] Unhandled error:", err);
+      // Prisma FK violation (P2003) or record not found (P2025) on user lookup
+      // means the JWT references a deleted user — treat as unauthenticated
+      if (err?.code === "P2003" || err?.code === "P2025") {
+        return NextResponse.json({ error: "Session expired. Please log in again." }, { status: 401 });
+      }
+      const { logger } = await import("@/lib/logger");
+      logger.error({
+        err,
+        method: request.method,
+        path: new URL(request.url).pathname,
+      }, "[authz] unhandled error");
       return NextResponse.json({ error: "Internal server error" }, { status: 500 });
     }
   };

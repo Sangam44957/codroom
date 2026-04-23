@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Trash2, Link2, ExternalLink, FileText, Clock, CheckCircle2, Sparkles, AlertCircle } from "lucide-react";
+import { Trash2, Link2, ExternalLink, FileText, Clock, CheckCircle2, Sparkles, AlertCircle, StopCircle } from "lucide-react";
 import ConfirmModal from "@/components/ui/ConfirmModal";
 
 const STATUS = {
@@ -23,15 +23,34 @@ function formatDate(d) {
   return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-export default function RoomCard({ room, onDeleted }) {
+export default function RoomCard({ room, liveCount, onDeleted }) {
   const router = useRouter();
   const [inviteCopied, setInviteCopied] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [closing, setClosing] = useState(false);
 
   const status = STATUS[room.status] || STATUS.waiting;
   const isDone = room.status === "completed" || room.status === "evaluated";
   const hasReport = !!room.interview?.report;
+
+  async function closeRoom(e) {
+    e.stopPropagation();
+    if (!confirm("Mark this interview as closed? This cannot be undone.")) return;
+    setClosing(true);
+    try {
+      const res = await fetch(`/api/rooms/${room.id}`, { method: "PATCH" });
+      if (res.ok) {
+        toast.success("Interview closed");
+        // Optimistically update the card status
+        room.status = "completed";
+        router.refresh();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error || "Failed to close room");
+      }
+    } finally { setClosing(false); }
+  }
 
   function openRoom(e) {
     e.stopPropagation();
@@ -78,6 +97,7 @@ export default function RoomCard({ room, onDeleted }) {
 
       {/* Top color bar based on status */}
       <div className={`h-0.5 w-full ${
+        liveCount > 0 ? "bg-gradient-to-r from-emerald-500 to-cyan-500" :
         room.status === "active" ? "bg-gradient-to-r from-cyan-500 to-blue-500" :
         hasReport ? "bg-gradient-to-r from-violet-500 to-cyan-500" :
         isDone ? "bg-gradient-to-r from-emerald-500 to-cyan-500" :
@@ -97,9 +117,18 @@ export default function RoomCard({ room, onDeleted }) {
               </p>
             )}
           </div>
-          <span className={`flex-shrink-0 text-[11px] px-2 py-0.5 rounded-full font-medium border ${status.cls}`}>
-            {status.label}
-          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {liveCount > 0 ? (
+              <span className="flex items-center gap-1.5 text-[11px] px-2.5 py-0.5 rounded-full font-semibold border text-emerald-400 bg-emerald-500/10 border-emerald-500/25">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                {liveCount} in room
+              </span>
+            ) : (
+              <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium border ${status.cls}`}>
+                {status.label}
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Problem + language */}
@@ -159,6 +188,19 @@ export default function RoomCard({ room, onDeleted }) {
             <Trash2 size={12} />
             {deleting ? "…" : "Delete"}
           </button>
+
+          {/* Close / no-show — only for open rooms */}
+          {!isDone && (
+            <button
+              onClick={closeRoom}
+              disabled={closing}
+              title="Close interview (no-show or early end)"
+              className="flex items-center gap-1 px-2.5 py-1.5 text-xs text-slate-600 hover:text-amber-400 hover:bg-amber-500/10 border border-transparent hover:border-amber-500/20 rounded-lg transition-all disabled:opacity-40 flex-shrink-0"
+            >
+              <StopCircle size={12} />
+              {closing ? "…" : "End"}
+            </button>
+          )}
 
           {/* Invite link */}
           <button

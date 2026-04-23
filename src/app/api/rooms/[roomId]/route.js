@@ -1,8 +1,11 @@
 import { NextResponse } from "next/server";
 import { jwtVerify } from "jose";
-import { withAuthz } from "@/lib/authz";
+import { requireAuth, withAuthz } from "@/lib/authz";
+import { checkCsrf } from "@/lib/csrf";
 import { getCurrentUser } from "@/lib/auth";
-import { getRoomById } from "@/services/room.service";
+import { getRoomById, updateRoomStatus } from "@/services/room.service";
+import { endInterview } from "@/services/interview.service";
+import prisma from "@/lib/db";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
@@ -53,4 +56,33 @@ export const GET = withAuthz(async (request, { params }) => {
     },
     { status: 200 }
   );
+});
+
+// PATCH /api/rooms/[roomId] — mark a room as no-show (no interview started)
+export const PATCH = withAuthz(async (request, { params }) => {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
+
+  const { roomId } = await params;
+  const user = await requireAuth();
+
+  const room = await prisma.room.findUnique({
+    where: { id: roomId },
+    select: { createdById: true, status: true, interview: { select: { id: true, status: true } } },
+  });
+  if (!room) return NextResponse.json({ error: "Room not found" }, { status: 404 });
+  if (room.createdById !== user.userId) return NextResponse.json({ error: "Access denied" }, { status: 403 });
+  if (room.status === "completed" || room.status === "evaluated") {
+    return NextResponse.json({ error: "Room already closed" }, { status: 400 });
+  }
+
+  // If an interview was started, end it properly (captures duration etc.)
+  if (room.interview && room.interview.status === "in_progress") {
+    await endInterview(room.interview.id, { finalCode: "", language: null });
+  } else {
+    // No interview — just close the room
+    await updateRoomStatus(roomId, "completed");
+  }
+
+  return NextResponse.json({ success: true });
 });

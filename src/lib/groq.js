@@ -1,8 +1,18 @@
 import Groq from "groq-sdk";
+import { groqBreaker, CircuitBreakerOpenError } from "./circuitBreaker";
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
+function isRetryable(error) {
+  const status = error?.status ?? error?.statusCode;
+  // Retry on rate limit (429), server errors (5xx), or network failures
+  return !status || status === 429 || status >= 500;
+}
 
 export async function evaluateCode({
   code,
@@ -19,36 +29,49 @@ export async function evaluateCode({
     testResults,
   });
 
-  try {
-    const response = await groq.chat.completions.create({
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        {
-          role: "system",
-          content: `You are an expert technical interviewer and code reviewer. 
+  let lastError;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await groqBreaker.execute(() =>
+        groq.chat.completions.create({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            {
+              role: "system",
+              content: `You are an expert technical interviewer and code reviewer. 
 You evaluate coding interview submissions with precision and fairness.
 You MUST respond with valid JSON only. No markdown, no explanation outside the JSON.`,
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.3,
-      max_tokens: 2000,
-      response_format: { type: "json_object" },
-    });
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 2000,
+          response_format: { type: "json_object" },
+        })
+      );
 
-    const content = response.choices[0]?.message?.content;
+      const content = response.choices[0]?.message?.content;
+      if (!content) throw new Error("No response from AI");
 
-    if (!content) throw new Error("No response from AI");
-
-    const evaluation = JSON.parse(content);
-    return validateEvaluation(evaluation);
-  } catch (error) {
-    console.error("AI evaluation error:", error);
-    throw new Error("AI evaluation failed: " + error.message);
+      const evaluation = JSON.parse(content);
+      return validateEvaluation(evaluation);
+    } catch (error) {
+      // Don't retry if the circuit is open — propagate immediately
+      if (error instanceof CircuitBreakerOpenError) throw error;
+      lastError = error;
+      if (attempt < MAX_RETRIES && isRetryable(error)) {
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS * attempt));
+        continue;
+      }
+      break;
+    }
   }
+
+  console.error("AI evaluation failed after retries:", lastError);
+  throw lastError;
 }
 
 function buildEvaluationPrompt({

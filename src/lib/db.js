@@ -1,11 +1,60 @@
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from "@prisma/client";
+import { logger } from "./logger";
 
-const globalForPrisma = globalThis
+const SLOW_QUERY_MS = 200;
 
-const prisma = globalForPrisma.prisma ?? new PrismaClient()
+function makePrismaClient() {
+  const client = new PrismaClient({
+    log: [
+      { emit: "event", level: "query" },
+      { emit: "event", level: "error" },
+      { emit: "event", level: "warn" },
+    ],
+  });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma
+  client.$on("query", (e) => {
+    if (e.duration > SLOW_QUERY_MS) {
+      logger.warn(
+        {
+          duration: e.duration,
+          query: e.query.substring(0, 500),
+          params: e.params?.substring(0, 200),
+        },
+        "slow database query"
+      );
+    }
+  });
+
+  client.$on("error", (e) => {
+    logger.error({ prismaError: e }, "prisma client error");
+  });
+
+  client.$on("warn", (e) => {
+    logger.warn({ prismaWarn: e }, "prisma client warning");
+  });
+
+  return client;
 }
 
-export default prisma
+const globalForPrisma = globalThis;
+
+const prisma = globalForPrisma.prisma ?? makePrismaClient();
+
+if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+
+prisma.$connect().catch((e) => {
+  console.error("❌ Database connection failed:", e.message);
+});
+
+export default prisma;
+
+export async function checkDatabaseHealth() {
+  try {
+    const start = Date.now();
+    await prisma.$queryRaw`SELECT 1`;
+    return { healthy: true, latencyMs: Date.now() - start };
+  } catch (error) {
+    logger.error({ err: error }, "database health check failed");
+    return { healthy: false, error: error.message };
+  }
+}

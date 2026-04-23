@@ -1,14 +1,27 @@
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { jwtVerify } from "jose";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
 import { withAuthz } from "@/lib/authz";
+import { checkCsrf } from "@/lib/csrf";
 import { runTestsForReport } from "@/lib/testRunner";
 import { getRoomById } from "@/services/room.service";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
+const SUPPORTED_LANGUAGES = ["javascript", "typescript", "python", "java", "cpp", "c", "go", "rust"];
+
+const bodySchema = z.object({
+  code: z.string().min(1, "code is required"),
+  language: z.enum(SUPPORTED_LANGUAGES),
+  problemIndex: z.number().int().min(0).optional().default(0),
+});
+
 export const POST = withAuthz(async (request, { params }) => {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
+
   const { roomId } = await params;
 
   const user = await getCurrentUser();
@@ -27,7 +40,8 @@ export const POST = withAuthz(async (request, { params }) => {
     }
   }
 
-  const rl = await rateLimit("run-tests", roomId, { limit: 20, windowMs: 60_000 });
+  const actorKey = user?.userId || request.headers.get("x-forwarded-for") || "anon";
+  const rl = await rateLimit("run-tests", actorKey, { limit: 20, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: `Rate limit exceeded. Try again in ${rl.retryAfter}s.` },
@@ -35,10 +49,12 @@ export const POST = withAuthz(async (request, { params }) => {
     );
   }
 
-  const { code, language, problemIndex = 0 } = await request.json();
-  if (!code?.trim() || !language) {
-    return NextResponse.json({ error: "code and language are required" }, { status: 400 });
+  const raw = await request.json().catch(() => null);
+  const parsed = bodySchema.safeParse(raw);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.issues[0].message }, { status: 400 });
   }
+  const { code, language, problemIndex } = parsed.data;
 
   const allProblems = room.problems?.length
     ? room.problems.map((rp) => rp.problem)

@@ -60,5 +60,22 @@ export async function getCurrentUser() {
   if (!token) return null;
 
   const payload = await verifyToken(token);
+  if (!payload) return null;
+
+  // Verify user still exists in DB — guards against stale JWTs after DB resets
+  try {
+    const { default: prisma } = await import("@/lib/db");
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true },
+    });
+    if (!user) {
+      cookieStore.delete(COOKIE_NAME);
+      return null;
+    }
+  } catch {
+    // DB unavailable — fall through and let the route handler deal with it
+  }
+
   return payload;
 }

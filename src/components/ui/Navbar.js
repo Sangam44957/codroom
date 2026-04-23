@@ -30,6 +30,7 @@ export default function Navbar({ user }) {
             <div className="flex items-center gap-1">
               <Link href="/dashboard" className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Dashboard</Link>
               <Link href="/problems"  className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Problems</Link>
+              <Link href="/analytics" className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Analytics</Link>
             </div>
           )}
         </div>

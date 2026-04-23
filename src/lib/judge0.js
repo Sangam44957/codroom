@@ -2,25 +2,18 @@ import { exec } from "child_process";
 import { writeFileSync, unlinkSync, mkdirSync } from "fs";
 import { join } from "path";
 import { platform } from "os";
+import { dockerBreaker, CircuitBreakerOpenError } from "./circuitBreaker";
+import { LANGUAGES } from "@/constants/languages";
 
 const IS_WINDOWS = platform() === "win32";
 
-// Language → { ext, image, cmd(filename) }
-// cmd receives only the basename; the file is mounted read-only at /sandbox/<file>.
-// Build artifacts for compiled languages go to /tmp (the tmpfs mount), never /sandbox.
-const LANGUAGE_CONFIG = {
-  javascript: { ext: "js",   image: "node:20-alpine",        cmd: (f) => `node /sandbox/${f}` },
-  // Use a dedicated image with tsx pre-installed so no network fetch is needed
-  // at runtime. Build once: docker build -t codroom-ts -f Dockerfile.sandbox-ts .
-  typescript: { ext: "ts",   image: "codroom-ts",            cmd: (f) => `tsx /sandbox/${f}` },
-  python:     { ext: "py",   image: "python:3.12-alpine",    cmd: (f) => `python /sandbox/${f}` },
-  // javac writes .class files to /tmp; java -cp /tmp runs them from there
-  java:       { ext: "java", image: "openjdk:21-slim",       cmd: (f) => `sh -c "javac -d /tmp /sandbox/${f} && java -cp /tmp Main"` },
-  cpp:        { ext: "cpp",  image: "gcc:13",                cmd: (f) => `sh -c "g++ -o /tmp/out /sandbox/${f} && /tmp/out"` },
-  c:          { ext: "c",    image: "gcc:13",                cmd: (f) => `sh -c "gcc -o /tmp/out /sandbox/${f} && /tmp/out"` },
-  go:         { ext: "go",   image: "golang:1.22-alpine",    cmd: (f) => `go run /sandbox/${f}` },
-  rust:       { ext: "rs",   image: "rust:1.77-alpine",      cmd: (f) => `sh -c "rustc -o /tmp/out /sandbox/${f} && /tmp/out"` },
-};
+// Build a lookup map from the shared language constants
+const LANGUAGE_CONFIG = Object.fromEntries(
+  Object.values(LANGUAGES).map((lang) => [
+    lang.id,
+    { ext: lang.ext, image: lang.dockerImage, cmd: lang.dockerCmd },
+  ])
+);
 
 const CODROOM_TMP = IS_WINDOWS
   ? join(process.env.TEMP || process.env.TMP || "C:\\Users\\Public\\Temp", "codroom")
@@ -35,12 +28,27 @@ function toDockerPath(winPath) {
 try { mkdirSync(CODROOM_TMP, { recursive: true }); } catch {}
 
 export async function submitCode(code, language, stdin = "") {
-  return new Promise((resolve) => {
-    const config = LANGUAGE_CONFIG[language];
-    if (!config) {
-      return resolve({ stdout: "", stderr: `Unsupported language: ${language}`, error: "Unsupported language" });
-    }
+  const config = LANGUAGE_CONFIG[language];
+  if (!config) {
+    return { stdout: "", stderr: `Unsupported language: ${language}`, error: "Unsupported language" };
+  }
 
+  try {
+    return await dockerBreaker.execute(() => _runContainer(code, config, stdin));
+  } catch (err) {
+    if (err instanceof CircuitBreakerOpenError) {
+      return {
+        stdout: "",
+        stderr: "Execution sandbox temporarily unavailable. Try again shortly.",
+        error: "DOCKER_UNAVAILABLE",
+      };
+    }
+    return { stdout: "", stderr: err.message, error: "DOCKER_UNAVAILABLE" };
+  }
+}
+
+function _runContainer(code, config, stdin) {
+  return new Promise((resolve, reject) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const filename = `codroom_${id}.${config.ext}`;
     const tmpFile = join(CODROOM_TMP, filename);
@@ -59,6 +67,12 @@ export async function submitCode(code, language, stdin = "") {
       "--cpus 0.5",
       "--read-only",
       "--tmpfs /tmp:size=32m",
+      "--no-new-privileges",
+      "--cap-drop ALL",
+      "--pids-limit 64",
+      "--user 65534:65534",
+      "--stop-timeout 2",
+      `--name codroom_${id}`,
       `--volume "${toDockerPath(tmpFile)}:/sandbox/${filename}:ro"`,
       `--workdir /sandbox`,
       `--ulimit nproc=64`,
@@ -74,19 +88,15 @@ export async function submitCode(code, language, stdin = "") {
 
     exec(dockerCmd, opts, (error, stdout, stderr) => {
       cleanup(tmpFile);
+      exec(`docker rm -f codroom_${id}`, () => {});
 
       if (error?.killed || error?.code === "ETIMEDOUT") {
         return resolve({ stdout: "", stderr: "Time Limit Exceeded (10s)", error: "TLE" });
       }
 
-      // Docker not running / not installed
       if (stderr?.includes("Cannot connect") || stderr?.includes("docker: not found") ||
-          error?.message?.includes("docker") && error?.message?.includes("pipe")) {
-        return resolve({
-          stdout: "",
-          stderr: "Execution sandbox unavailable. Docker must be running on the server.",
-          error: "DOCKER_UNAVAILABLE",
-        });
+          (error?.message?.includes("docker") && error?.message?.includes("pipe"))) {
+        return reject(new Error("DOCKER_UNAVAILABLE"));
       }
 
       resolve({ stdout, stderr, error: error?.message });

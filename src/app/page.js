@@ -131,8 +131,17 @@ function FeatureCard({ icon: Icon, title, desc, iconCls, delay }) {
   );
 }
 
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  if (hour >= 17 && hour < 21) return "Good evening";
+  return "Good night";
+}
+
 // ── Main page ────────────────────────────────────────────────────────────────
 export default function Home() {
+  const [greeting] = useState(() => getGreeting());
   return (
     <div className="relative min-h-screen bg-[#09090B] text-white overflow-x-hidden">
       {/* Background layers */}
@@ -159,7 +168,9 @@ export default function Home() {
                 animate={{ opacity: [1, 0.3, 1] }}
                 transition={{ duration: 2, repeat: Infinity }}
               />
-              <span className="text-xs font-mono text-[#00E87B]">Now in Public Beta</span>
+              <span className="text-xs font-mono text-[#00E87B]">
+                {greeting ? `${greeting} — Now in Public Beta` : "Now in Public Beta"}
+              </span>
             </motion.div>
 
             <motion.h1

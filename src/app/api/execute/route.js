@@ -2,10 +2,14 @@ import { NextResponse } from "next/server";
 import { submitCode, parseResult } from "@/lib/judge0";
 import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
+import { checkCsrf } from "@/lib/csrf";
 
 const MAX_CODE_BYTES = 64 * 1024; // 64 KB
 
 export async function POST(request) {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
+
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

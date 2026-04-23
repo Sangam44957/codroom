@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from "crypto";
+import bcrypt from "bcryptjs";
 import {
   findUserByEmail,
   findUserById,
@@ -65,12 +66,13 @@ export async function register({ name, email, password }) {
   const otp = String(randomInt(100000, 999999));
   const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
   const emailConfigured = !!process.env.BREVO_API_KEY;
+  const otpHash = emailConfigured ? await bcrypt.hash(otp, 10) : null;
 
   const user = await createUser({
     name: name.trim(),
     email: email.trim().toLowerCase(),
     password: hashed,
-    verifyOtp: emailConfigured ? otp : null,
+    verifyOtp: otpHash,
     verifyOtpExpiry: emailConfigured ? otpExpiry : null,
     emailVerified: !emailConfigured,
   });
@@ -101,7 +103,8 @@ export async function verifyEmail({ email, otp }) {
   const user = await findUserByEmail(email?.trim().toLowerCase());
   if (!user) return { error: "User not found", status: 404 };
   if (user.emailVerified) return { error: "Email already verified", status: 400 };
-  if (!user.verifyOtp || user.verifyOtp !== otp) return { error: "Invalid code", status: 400 };
+  const otpValid = user.verifyOtp && await bcrypt.compare(otp, user.verifyOtp);
+  if (!otpValid) return { error: "Invalid code", status: 400 };
   if (user.verifyOtpExpiry && new Date() > new Date(user.verifyOtpExpiry)) {
     return { error: "Code expired. Request a new one.", status: 400 };
   }
@@ -127,8 +130,9 @@ export async function forgotPassword(email) {
 
   const otp = String(randomInt(100000, 999999));
   const expiry = new Date(Date.now() + 15 * 60 * 1000);
+  const otpHash = await bcrypt.hash(otp, 10);
 
-  await updateUser(user.id, { resetOtp: otp, resetOtpExpiry: expiry });
+  await updateUser(user.id, { resetOtp: otpHash, resetOtpExpiry: expiry });
   sendPasswordResetEmail(user.email, otp).catch((err) =>
     console.error("[forgot-password] email error:", err.message)
   );
@@ -150,7 +154,8 @@ export async function resetPassword({ email, otp, password }) {
   }
 
   const user = await findUserByEmail(email.trim().toLowerCase());
-  if (!user || !user.resetOtp || user.resetOtp !== otp) {
+  const resetOtpValid = user?.resetOtp && await bcrypt.compare(otp, user.resetOtp);
+  if (!resetOtpValid) {
     return { error: "Invalid or expired reset code", status: 400 };
   }
   if (user.resetOtpExpiry && new Date() > new Date(user.resetOtpExpiry)) {

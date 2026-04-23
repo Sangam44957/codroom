@@ -4,9 +4,9 @@ const { describe, it, expect } = require("@jest/globals");
 const fs = require("fs");
 const path = require("path");
 
-// Verify the production snapshots route uses cursor-based pagination
+// Verify the production snapshots service uses cursor-based pagination
 const routeSrc = fs.readFileSync(
-  path.resolve(__dirname, "../app/api/interviews/[interviewId]/snapshots/route.js"),
+  path.resolve(__dirname, "../services/interview.service.js"),
   "utf8"
 );
 

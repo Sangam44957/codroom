@@ -5,54 +5,55 @@ const fs   = require("fs");
 const path = require("path");
 
 // ── Pull source text ──────────────────────────────────────────────────────────
-const startSrc = fs.readFileSync(
+const startRouteSrc = fs.readFileSync(
   path.resolve(__dirname, "../app/api/interviews/route.js"), "utf8"
 );
-const endSrc = fs.readFileSync(
+const endRouteSrc = fs.readFileSync(
   path.resolve(__dirname, "../app/api/interviews/[interviewId]/end/route.js"), "utf8"
+);
+const serviceSrc = fs.readFileSync(
+  path.resolve(__dirname, "../services/interview.service.js"), "utf8"
 );
 
 // ── Structural checks ─────────────────────────────────────────────────────────
 describe("interview start route — source checks", () => {
   it("requires roomId", () => {
-    expect(startSrc).toMatch(/roomId is required/);
-    expect(startSrc).toMatch(/status: 400/);
+    expect(startRouteSrc).toMatch(/roomId is required/);
+    expect(startRouteSrc).toMatch(/status: 400/);
   });
 
   it("is idempotent — returns existing interview if already started", () => {
-    expect(startSrc).toMatch(/findUnique/);
-    expect(startSrc).toMatch(/Idempotent/i);
+    expect(serviceSrc).toMatch(/findInterviewByRoomId/);
+    expect(serviceSrc).toMatch(/Idempotent/i);
   });
 
   it("only room owner can start (requireRoomOwner)", () => {
-    expect(startSrc).toMatch(/requireRoomOwner/);
+    expect(startRouteSrc).toMatch(/requireRoomOwner/);
   });
 });
 
 describe("interview end route — source checks", () => {
   it("rejects ending an already-completed interview", () => {
-    expect(endSrc).toMatch(/already ended/);
-    expect(endSrc).toMatch(/status: 400/);
+    expect(serviceSrc).toMatch(/already ended/);
+    expect(serviceSrc).toMatch(/status: 400/);
   });
 
   it("enforces 64 KB code size limit", () => {
-    expect(endSrc).toMatch(/64/);
-    expect(endSrc).toMatch(/413/);
+    expect(serviceSrc).toMatch(/64/);
+    expect(serviceSrc).toMatch(/413/);
   });
 
   it("calculates duration from startedAt", () => {
-    expect(endSrc).toMatch(/duration/);
-    expect(endSrc).toMatch(/startedAt/);
+    expect(serviceSrc).toMatch(/duration/);
+    expect(serviceSrc).toMatch(/startedAt/);
   });
 
   it("only interview owner can end (requireInterviewOwner)", () => {
-    expect(endSrc).toMatch(/requireInterviewOwner/);
+    expect(endRouteSrc).toMatch(/requireInterviewOwner/);
   });
 });
 
 // ── Mirror interview state-machine ───────────────────────────────────────────
-// Mirrors the guard in end/route.js:
-//   if (status === "completed" || status === "evaluated") → 400
 const TERMINAL_STATUSES = ["completed", "evaluated"];
 
 function canEndInterview(status) {
@@ -78,7 +79,6 @@ describe("interview end — state machine", () => {
 });
 
 // ── Mirror duration calculation ───────────────────────────────────────────────
-// Mirrors: Math.floor((endedAt - startedAt) / 1000)
 function calcDuration(startedAt, endedAt) {
   return Math.floor((new Date(endedAt).getTime() - new Date(startedAt).getTime()) / 1000);
 }
@@ -136,14 +136,12 @@ describe("interview end — code size guard", () => {
   });
 
   it("counts multi-byte UTF-8 characters correctly", () => {
-    // Each emoji is 4 bytes — 16385 emojis × 4 = 65540 bytes > 64 KB
     const emoji = "😀".repeat(16385);
     expect(isCodeTooLarge(emoji)).toBe(true);
   });
 });
 
 // ── Mirror start idempotency ──────────────────────────────────────────────────
-// Mirrors: if (interview) return existing; else create new
 function startInterview(existingInterview, roomId, language) {
   if (existingInterview) return { interview: existingInterview, created: false };
   const interview = { id: "new-id", roomId, language: language || "javascript", status: "in_progress" };

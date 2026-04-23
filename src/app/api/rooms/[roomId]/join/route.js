@@ -25,11 +25,11 @@ export async function POST(request, { params }) {
 
   const response = NextResponse.json({ ok: true, candidateName: resolvedName }, { status: 200 });
   response.cookies.set(`room-ticket-${roomId}`, ticket, {
-    httpOnly: true,
+    httpOnly: false,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: TICKET_TTL_SECONDS,
-    path: `/api/rooms/${roomId}`,
+    path: "/",
   });
   return response;
 }

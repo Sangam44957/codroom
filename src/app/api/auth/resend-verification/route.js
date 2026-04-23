@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomInt } from "crypto";
+import bcrypt from "bcryptjs";
 import prisma from "@/lib/db";
 import { sendVerificationEmail } from "@/lib/email";
 import { rateLimit } from "@/lib/rateLimit";
@@ -30,9 +31,10 @@ export async function POST(request) {
   if (user && !user.emailVerified) {
     const otp = String(randomInt(100000, 999999));
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    const otpHash = await bcrypt.hash(otp, 10);
     await prisma.user.update({
       where: { id: user.id },
-      data: { verifyOtp: otp, verifyOtpExpiry: otpExpiry },
+      data: { verifyOtp: otpHash, verifyOtpExpiry: otpExpiry },
     });
     await sendVerificationEmail(user.email, otp).catch((err) =>
       console.error("[resend-verification] email error:", err.message)

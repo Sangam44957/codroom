@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-const DEFAULT_LOCK_THRESHOLD = 10; // auto-lock after this many violations
+const DEFAULT_LOCK_THRESHOLD = 10;
 
 export default function useSecurityMonitor(isActive, onViolation, onLocked, lockThreshold = DEFAULT_LOCK_THRESHOLD) {
   const [violations, setViolations] = useState([]);
@@ -11,16 +11,23 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
   const [isLocked, setIsLocked] = useState(false);
   const onViolationRef = useRef(onViolation);
   const onLockedRef = useRef(onLocked);
-  const violationCountRef = useRef(0); // sync ref to avoid stale closure in handlers
-  // Debounce blur — Monaco iframe focus transfers cause false positives
+  const violationCountRef = useRef(0);
   const blurTimerRef = useRef(null);
-  // Track last keydown time for Ctrl+A+C combo detection
   const lastSelectAllRef = useRef(0);
 
   useEffect(() => { onViolationRef.current = onViolation; }, [onViolation]);
   useEffect(() => { onLockedRef.current = onLocked; }, [onLocked]);
 
+  // Exposed so the interviewer can remotely unlock the candidate
+  const unlock = useCallback(() => {
+    setIsLocked(false);
+    violationCountRef.current = 0;
+    setViolations([]);
+    setWarningCount(0);
+  }, []);
+
   const addViolation = useCallback((type, details) => {
+    if (!isActive) return;
     const violation = {
       id: Date.now().toString(),
       type,
@@ -36,7 +43,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       setIsLocked(true);
       onLockedRef.current?.(violationCountRef.current);
     }
-  }, [lockThreshold]);
+  }, [isActive, lockThreshold]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -47,11 +54,8 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       }
     }
 
-    // Debounced blur: wait 300ms — if focus came back (e.g. Monaco iframe)
-    // the refocus fires before the timer and we cancel it
     function handleBlur() {
       blurTimerRef.current = setTimeout(() => {
-        // Only fire if document is still not focused and not hidden
         if (!document.hasFocus() && !document.hidden) {
           addViolation("window_blur", "Candidate clicked outside the browser window");
         }
@@ -70,18 +74,28 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       setIsFullscreen(isFs);
       if (!isFs && isActive) {
         addViolation("fullscreen_exit", "Candidate exited fullscreen mode");
+        // Re-request fullscreen after a short delay so the violation is recorded
+        // before the browser re-enters fullscreen (requires a user gesture context)
+        setTimeout(() => {
+          if (document.fullscreenElement) return; // already back
+          document.documentElement.requestFullscreen().catch(() => {});
+        }, 800);
       }
     }
 
     function handlePaste(e) {
+      // Ignore paste events that originate inside the Monaco editor iframe/container
+      const target = e.target;
+      const isInEditor = target?.closest?.(".monaco-editor") ||
+        target?.closest?.("[data-keybinding-context]") ||
+        target?.tagName === "TEXTAREA" ||
+        target?.tagName === "INPUT";
+      if (isInEditor) return;
+
       const pastedText = e.clipboardData?.getData("text") || "";
       if (pastedText.length > 20) {
-        addViolation("paste_detected", `Candidate pasted ${pastedText.length} characters`);
+        addViolation("paste_detected", `Candidate pasted ${pastedText.length} characters outside editor`);
       }
-    }
-
-    function handleContextMenu() {
-      addViolation("right_click", "Candidate used right-click context menu");
     }
 
     function handleKeyDown(e) {
@@ -96,18 +110,17 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
         addViolation("devtools", "Candidate pressed F12");
         e.preventDefault();
       }
-      // Ctrl+A — record timestamp for combo detection
+      // Track Ctrl+A for combo detection
       if (e.ctrlKey && e.key === "a") {
         lastSelectAllRef.current = Date.now();
       }
-      // Ctrl+C — flag as copy attempt
-      // Also catches Ctrl+A then Ctrl+C within 2s (select-all + copy combo)
+      // Only flag Ctrl+C as a violation when it's a select-all+copy combo
+      // (Ctrl+A within 2s then Ctrl+C) — normal in-editor copy is fine
       if (e.ctrlKey && e.key === "c") {
         const isCombo = Date.now() - lastSelectAllRef.current < 2000;
-        addViolation(
-          "copy_detected",
-          isCombo ? "Candidate used Ctrl+A then Ctrl+C (select-all copy)" : "Candidate copied text (Ctrl+C)"
-        );
+        if (isCombo) {
+          addViolation("copy_detected", "Candidate used Ctrl+A then Ctrl+C (select-all copy)");
+        }
       }
     }
 
@@ -129,7 +142,6 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
     window.addEventListener("focus", handleFocus);
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("paste", handlePaste);
-    document.addEventListener("contextmenu", handleContextMenu);
     document.addEventListener("keydown", handleKeyDown);
 
     return () => {
@@ -138,7 +150,6 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("paste", handlePaste);
-      document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
       scriptObserver.disconnect();
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
@@ -163,5 +174,5 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
     }
   }, []);
 
-  return { violations, warningCount, isFullscreen, isLocked, requestFullscreen, exitFullscreen };
+  return { violations, warningCount, isFullscreen, isLocked, unlock, requestFullscreen, exitFullscreen };
 }

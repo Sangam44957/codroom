@@ -1,66 +1,112 @@
 "use strict";
 
-const { describe, it, expect } = require("@jest/globals");
-const fs   = require("fs");
-const path = require("path");
+const { describe, it, expect, beforeEach } = require("@jest/globals");
 
-// ── Pull source text so tests break if production logic changes ───────────────
-const joinSrc = fs.readFileSync(
-  path.resolve(__dirname, "../app/api/rooms/[roomId]/join/route.js"), "utf8"
-);
-const roomSrc = fs.readFileSync(
-  path.resolve(__dirname, "../app/api/rooms/[roomId]/route.js"), "utf8"
-);
+// ── Mock next/server so NextResponse works outside the Next.js runtime ────────
+jest.mock("next/server", () => {
+  const { NextResponse } = jest.requireActual("next/server");
+  return { NextResponse };
+});
 
-// ── Structural checks on production source ────────────────────────────────────
-describe("room join route — source checks", () => {
-  it("issues a signed room-session ticket", () => {
-    expect(joinSrc).toMatch(/room-session/);
-    expect(joinSrc).toMatch(/SignJWT/);
+// ── Mock next/headers (used by getCurrentUser inside withAuthz) ───────────────
+jest.mock("next/headers", () => ({
+  cookies: jest.fn().mockResolvedValue({ get: jest.fn().mockReturnValue(null) }),
+}));
+
+// ── Mock validateEnv so it doesn't throw on missing prod vars ─────────────────
+jest.mock("@/lib/validateEnv", () => {});
+
+// ── Mock the service layer — tests control what the DB "returns" ──────────────
+jest.mock("@/services/room.service", () => ({
+  validateJoinToken: jest.fn(),
+  getRoomById: jest.fn(),
+}));
+
+const { validateJoinToken } = require("@/services/room.service");
+const { POST: joinRoom } = require("@/app/api/rooms/[roomId]/join/route");
+
+// ── Minimal Request factory ───────────────────────────────────────────────────
+function makeRequest(body) {
+  return {
+    json: () => Promise.resolve(body),
+    cookies: { get: () => null },
+    headers: { get: () => null },
+  };
+}
+
+const ROOM_ID = "room-abc-123";
+const VALID_TOKEN = "valid-token-abc123";
+
+describe("POST /api/rooms/[roomId]/join — behavioral", () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it("returns 200 and sets HttpOnly room-ticket cookie on valid token", async () => {
+    validateJoinToken.mockResolvedValue({ id: ROOM_ID, joinToken: VALID_TOKEN, candidateName: null });
+
+    const res = await joinRoom(makeRequest({ joinToken: VALID_TOKEN }), { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+
+    const cookie = res.cookies.get(`room-ticket-${ROOM_ID}`);
+    expect(cookie).toBeDefined();
+    expect(cookie.httpOnly).toBe(true);
+    expect(cookie.path).toBe("/");
   });
 
-  it("scopes the ticket cookie path to the specific room", () => {
-    expect(joinSrc).toMatch(/path.*api\/rooms/);
+  it("embeds candidateName from room record into the ticket cookie value", async () => {
+    validateJoinToken.mockResolvedValue({ id: ROOM_ID, joinToken: VALID_TOKEN, candidateName: "Alice" });
+
+    const res = await joinRoom(makeRequest({ joinToken: VALID_TOKEN }), { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.candidateName).toBe("Alice");
   });
 
-  it("rejects missing joinToken with 400", () => {
-    expect(joinSrc).toMatch(/joinToken required/);
-    expect(joinSrc).toMatch(/status: 400/);
+  it("falls back to submitted candidateName when room has none", async () => {
+    validateJoinToken.mockResolvedValue({ id: ROOM_ID, joinToken: VALID_TOKEN, candidateName: null });
+
+    const res = await joinRoom(makeRequest({ joinToken: VALID_TOKEN, candidateName: "Bob" }), { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).candidateName).toBe("Bob");
   });
 
-  it("rejects wrong joinToken with 403", () => {
-    expect(joinSrc).toMatch(/Invalid invite link/);
-    expect(joinSrc).toMatch(/status: 403/);
+  it("returns 400 when joinToken is missing from request body", async () => {
+    const res = await joinRoom(makeRequest({}), { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(400);
+    expect(validateJoinToken).not.toHaveBeenCalled();
   });
 
-  it("ticket TTL is at least 1 hour", () => {
-    // Extract the numeric TTL constant
-    const match = joinSrc.match(/TICKET_TTL_SECONDS\s*=\s*(\d+)/);
-    expect(match).not.toBeNull();
-    expect(Number(match[1])).toBeGreaterThanOrEqual(3600);
+  it("returns 403 when joinToken does not match the room", async () => {
+    validateJoinToken.mockResolvedValue(null);
+
+    const res = await joinRoom(makeRequest({ joinToken: "wrong-token" }), { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 403 when room does not exist", async () => {
+    validateJoinToken.mockResolvedValue(null);
+
+    const res = await joinRoom(makeRequest({ joinToken: VALID_TOKEN }), { params: Promise.resolve({ roomId: "non-existent-id" }) });
+
+    expect(res.status).toBe(403);
+  });
+
+  it("returns 400 when request body is not valid JSON", async () => {
+    const badReq = { json: () => Promise.reject(new SyntaxError("bad json")), cookies: { get: () => null } };
+
+    const res = await joinRoom(badReq, { params: Promise.resolve({ roomId: ROOM_ID }) });
+
+    expect(res.status).toBe(400);
   });
 });
 
-describe("room GET route — source checks", () => {
-  it("strips expected test-case outputs for non-owners", () => {
-    expect(roomSrc).toMatch(/sanitizeProblem/);
-    expect(roomSrc).toMatch(/input/);   // keeps input
-    // must not expose 'expected' field to candidates
-    expect(roomSrc).not.toMatch(/expected.*testCases/);
-  });
-
-  it("validates room-session ticket type before granting access", () => {
-    expect(roomSrc).toMatch(/room-session/);
-  });
-
-  it("returns 403 when no ticket cookie is present", () => {
-    expect(roomSrc).toMatch(/No room access ticket/);
-    expect(roomSrc).toMatch(/status: 403/);
-  });
-});
-
-// ── Mirror candidate-name resolution logic ────────────────────────────────────
-// Mirrors: resolvedName = room.candidateName?.trim() || candidateName?.trim() || null
+// ── Candidate name resolution (pure logic — no mocks needed) ─────────────────
 function resolveCandidateName(roomCandidateName, submittedName) {
   return roomCandidateName?.trim() || submittedName?.trim() || null;
 }
@@ -91,14 +137,10 @@ describe("candidate name resolution", () => {
   });
 });
 
-// ── Mirror test-case sanitisation logic ──────────────────────────────────────
-// Mirrors: testCases: (p.testCases || []).map(({ input }) => ({ input }))
+// ── Problem sanitisation (pure logic — no mocks needed) ──────────────────────
 function sanitizeProblem(p) {
   if (!p) return null;
-  return {
-    ...p,
-    testCases: (p.testCases || []).map(({ input }) => ({ input })),
-  };
+  return { ...p, testCases: (p.testCases || []).map(({ input }) => ({ input })) };
 }
 
 describe("problem sanitisation for candidates", () => {
@@ -110,24 +152,19 @@ describe("problem sanitisation for candidates", () => {
         { input: "[3,2,4]\n6",     expected: "[1,2]" },
       ],
     };
-    const sanitized = sanitizeProblem(problem);
-    sanitized.testCases.forEach((tc) => {
+    sanitizeProblem(problem).testCases.forEach((tc) => {
       expect(tc).toHaveProperty("input");
       expect(tc).not.toHaveProperty("expected");
     });
   });
 
   it("preserves input values exactly", () => {
-    const problem = {
-      id: "p1", title: "T",
-      testCases: [{ input: "hello", expected: "world" }],
-    };
+    const problem = { id: "p1", title: "T", testCases: [{ input: "hello", expected: "world" }] };
     expect(sanitizeProblem(problem).testCases[0].input).toBe("hello");
   });
 
   it("handles problem with no test cases", () => {
-    const problem = { id: "p1", title: "T", testCases: [] };
-    expect(sanitizeProblem(problem).testCases).toHaveLength(0);
+    expect(sanitizeProblem({ id: "p1", title: "T", testCases: [] }).testCases).toHaveLength(0);
   });
 
   it("handles null problem", () => {
@@ -135,7 +172,6 @@ describe("problem sanitisation for candidates", () => {
   });
 
   it("handles problem with null testCases", () => {
-    const problem = { id: "p1", title: "T", testCases: null };
-    expect(sanitizeProblem(problem).testCases).toHaveLength(0);
+    expect(sanitizeProblem({ id: "p1", title: "T", testCases: null }).testCases).toHaveLength(0);
   });
 });

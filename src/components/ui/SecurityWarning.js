@@ -15,9 +15,13 @@ export default function SecurityWarning({ warningCount, isLocked, onDismiss }) {
           </div>
           <h1 className="text-2xl font-black text-white mb-3">Session Locked</h1>
           <p className="text-slate-400 text-sm leading-relaxed">
-            Too many security violations were detected. Your session has been locked and the interviewer has been notified.
+            Too many security violations were detected. The interviewer has been notified and can unlock your session.
           </p>
-          <p className="text-slate-600 text-xs mt-4">{warningCount} violations recorded</p>
+          <div className="mt-5 flex items-center justify-center gap-2 text-slate-600 text-xs">
+            <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+            Waiting for interviewer to unlock...
+          </div>
+          <p className="text-slate-700 text-xs mt-3">{warningCount} violations recorded</p>
         </div>
       </div>
     );

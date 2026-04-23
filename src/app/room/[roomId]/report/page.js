@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -10,7 +10,7 @@ import {
 import {
   ArrowLeft, Play, Share2, Trash2, RefreshCw,
   CheckCircle, XCircle, AlertCircle, Clock, Code2,
-  TrendingUp, Zap, Shield, ChevronRight, Copy, Check
+  TrendingUp, Zap, Shield, ChevronRight, Copy, Check, Download
 } from "lucide-react";
 
 const clamp = (n, a, b) => Math.min(b, Math.max(a, Number(n) || 0));
@@ -85,36 +85,15 @@ export default function ReportPage() {
   const [sharing, setSharing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [revoking, setRevoking] = useState(false);
+  const [shareRecipient, setShareRecipient] = useState("");
   const [rubricSaved, setRubricSaved] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [rubric, setRubric] = useState({
     problemSolving: 0, communication: 0, codeQuality: 0, edgeCases: 0, speed: 0,
   });
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchData(); }, []);
-
-  // Poll every 3s if the interview is completed but report not yet ready
-  useEffect(() => {
-    if (!polling) return;
-    const id = setInterval(async () => {
-      const roomRes = await fetch(`/api/rooms/${roomId}`).catch(() => null);
-      if (!roomRes?.ok) return;
-      const roomData = await roomRes.json();
-      const interviewId = roomData.room?.interview?.id;
-      if (!interviewId) return;
-      const reportRes = await fetch(`/api/interviews/${interviewId}/report`);
-      if (reportRes.ok) {
-        const d = await reportRes.json();
-        setReport(d.report);
-        setPolling(false);
-        clearInterval(id);
-      }
-    }, 3000);
-    return () => clearInterval(id);
-  }, [polling, roomId]);
-
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     try {
       const roomRes = await fetch(`/api/rooms/${roomId}`);
       const roomData = await roomRes.json();
@@ -144,7 +123,29 @@ export default function ReportPage() {
       }
     } catch { setError("Failed to load report"); }
     finally { setLoading(false); }
-  }
+  }, [roomId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  // Poll every 3s if the interview is completed but report not yet ready
+  useEffect(() => {
+    if (!polling) return;
+    const id = setInterval(async () => {
+      const roomRes = await fetch(`/api/rooms/${roomId}`).catch(() => null);
+      if (!roomRes?.ok) return;
+      const roomData = await roomRes.json();
+      const interviewId = roomData.room?.interview?.id;
+      if (!interviewId) return;
+      const reportRes = await fetch(`/api/interviews/${interviewId}/report`);
+      if (reportRes.ok) {
+        const d = await reportRes.json();
+        setReport(d.report);
+        setPolling(false);
+        clearInterval(id);
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  }, [polling, roomId]);
 
   async function generateReport() {
     const interviewId = room?.interview?.id;
@@ -188,7 +189,7 @@ export default function ReportPage() {
       const res = await fetch(`/api/interviews/${interviewId}/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rubric }),
+        body: JSON.stringify({ rubric, recipientEmail: shareRecipient.trim() || undefined }),
       });
       const data = await res.json();
       if (data.shareToken) {
@@ -200,6 +201,24 @@ export default function ReportPage() {
         setTimeout(() => setCopied(false), 3000);
       }
     } finally { setSharing(false); }
+  }
+
+  async function downloadPDF() {
+    const interviewId = room?.interview?.id;
+    if (!interviewId) return;
+    setDownloading(true);
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/report/pdf`);
+      if (!res.ok) { toast.error("Failed to generate PDF"); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = res.headers.get("Content-Disposition")?.match(/filename="(.+)"$/)?.[1] || "report.pdf";
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { toast.error("Download failed"); }
+    finally { setDownloading(false); }
   }
 
   async function revokeShareLink() {
@@ -216,13 +235,19 @@ export default function ReportPage() {
 
   async function deleteInterview() {
     const interviewId = room?.interview?.id;
-    if (!interviewId) return;
+    if (!interviewId) {
+      toast.error("No interview found to delete.");
+      return;
+    }
     if (!confirm("Delete this interview and all its data? This cannot be undone.")) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/interviews/${interviewId}`, { method: "DELETE" });
       if (res.ok) { toast.success("Interview deleted"); router.push("/dashboard"); }
-      else toast.error("Delete failed.");
+      else {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error || "Delete failed.");
+      }
     } finally { setDeleting(false); }
   }
 
@@ -367,8 +392,9 @@ export default function ReportPage() {
           <div className="flex items-center gap-4">
             <RecIcon size={36} className={rec.color} />
             <div>
-              <p className="text-xs text-slate-500 uppercase tracking-widest mb-0.5">AI Recommendation</p>
+              <p className="text-xs text-slate-500 uppercase tracking-widest mb-0.5">AI Suggestion</p>
               <h1 className={`text-3xl font-black ${rec.color}`}>{rec.label}</h1>
+              <p className="text-xs text-slate-600 mt-1">This is an AI-generated suggestion, not a final decision.</p>
             </div>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
@@ -499,12 +525,26 @@ export default function ReportPage() {
             {/* Share */}
             <div className="bg-white/[0.025] border border-white/[0.07] rounded-2xl p-5 space-y-3">
               <h2 className="text-sm font-semibold text-white">Share Report</h2>
+              <input
+                type="email"
+                placeholder="Send to email (optional)"
+                value={shareRecipient}
+                onChange={(e) => setShareRecipient(e.target.value)}
+                className="w-full px-3 py-2 bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500/50 transition-all"
+              />
               <button
                 onClick={generateShareLink}
                 disabled={sharing}
                 className="w-full flex items-center justify-center gap-2 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
               >
                 {copied ? <><Check size={15} /> Copied!</> : sharing ? "Generating…" : <><Share2 size={15} /> Generate Share Link</>}
+              </button>
+              <button
+                onClick={downloadPDF}
+                disabled={downloading}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-white/[0.04] hover:bg-white/[0.07] border border-white/[0.08] hover:border-white/[0.14] text-slate-300 rounded-xl font-semibold text-sm transition-all disabled:opacity-50"
+              >
+                <Download size={15} /> {downloading ? "Generating PDF…" : "Download PDF"}
               </button>
               {shareUrl && (
                 <div className="flex items-center gap-2 p-3 bg-white/[0.03] border border-white/[0.06] rounded-xl">

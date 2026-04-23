@@ -1,14 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { Plus, X, Trash2, ChevronDown } from "lucide-react";
+import { Plus, X, Trash2, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import Navbar from "@/components/ui/Navbar";
 import { toast } from "sonner";
 
 const TOPICS = ["arrays", "strings", "stacks", "math", "linked-lists", "trees", "graphs", "design", "other"];
 const DIFFICULTIES = ["all", "easy", "medium", "hard"];
+const COMPANIES = ["google", "meta", "amazon", "microsoft", "stripe", "apple"];
 
 const DIFF_CLS = {
   easy:   "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
@@ -19,6 +20,7 @@ const DIFF_CLS = {
 function CreateProblemModal({ onClose, onCreated }) {
   const [form, setForm] = useState({
     title: "", description: "", difficulty: "easy", topic: "arrays", starterCode: "",
+    companies: "", estimatedTime: "", isPublic: false, tags: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -35,7 +37,12 @@ function CreateProblemModal({ onClose, onCreated }) {
       const res = await fetch("/api/problems", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          ...form,
+          companies: form.companies ? form.companies.split(",").map((c) => c.trim()).filter(Boolean) : [],
+          tags: form.tags ? form.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+          estimatedTime: form.estimatedTime ? parseInt(form.estimatedTime, 10) : null,
+        }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error); return; }
@@ -103,10 +110,31 @@ function CreateProblemModal({ onClose, onCreated }) {
           <div>
             <label className="block text-sm font-medium text-slate-300 mb-2">Starter Code <span className="text-slate-600">(optional)</span></label>
             <textarea
-              rows={4} placeholder="function twoSum(nums, target) {\n  // your code here\n}"
+              rows={4} placeholder={"function twoSum(nums, target) {\n  // your code here\n}"}
               value={form.starterCode} onChange={set("starterCode")}
               className={inputCls + " resize-none font-mono text-xs"}
             />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Companies <span className="text-slate-600">(comma-separated)</span></label>
+              <input type="text" placeholder="google, stripe" value={form.companies} onChange={set("companies")} className={inputCls} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">Est. Time <span className="text-slate-600">(minutes)</span></label>
+              <input type="number" placeholder="30" min="1" value={form.estimatedTime} onChange={set("estimatedTime")} className={inputCls} />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">Tags <span className="text-slate-600">(comma-separated)</span></label>
+            <input type="text" placeholder="two-pointers, hash-map" value={form.tags} onChange={set("tags")} className={inputCls} />
+          </div>
+
+          <div className="flex items-center gap-3">
+            <input type="checkbox" id="isPublic" checked={form.isPublic} onChange={(e) => setForm((p) => ({ ...p, isPublic: e.target.checked }))} className="w-4 h-4 accent-violet-500" />
+            <label htmlFor="isPublic" className="text-sm text-slate-300">Make public <span className="text-slate-600">(visible to all users)</span></label>
           </div>
 
           {error && (
@@ -135,10 +163,14 @@ export default function ProblemsPage() {
   const router = useRouter();
   const [user, setUser] = useState(null);
   const [problems, setProblems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(true);
   const [difficulty, setDifficulty] = useState("all");
   const [topic, setTopic] = useState("all");
+  const [company, setCompany] = useState("all");
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [selectedProblem, setSelectedProblem] = useState(null);
   const [showCreate, setShowCreate] = useState(false);
   const [deleting, setDeleting] = useState(null);
@@ -150,21 +182,29 @@ export default function ProblemsPage() {
     }).then((d) => d && setUser(d.user));
   }, [router]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchProblems(); }, [difficulty, topic, search]);
-
-  async function fetchProblems() {
+  const fetchProblems = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (difficulty !== "all") params.set("difficulty", difficulty);
       if (topic !== "all") params.set("topic", topic);
+      if (company !== "all") params.set("company", company);
       if (search) params.set("search", search);
+      params.set("page", String(page));
       const res = await fetch(`/api/problems?${params}`);
       const data = await res.json();
-      if (res.ok) setProblems(data.problems);
+      if (res.ok) {
+        setProblems(data.problems);
+        setTotal(data.total);
+        setTotalPages(data.totalPages);
+      }
     } finally { setLoading(false); }
-  }
+  }, [difficulty, topic, company, search, page]);
+
+  useEffect(() => { fetchProblems(); }, [fetchProblems]);
+
+  // Reset to page 1 when filters change
+  useEffect(() => { setPage(1); }, [difficulty, topic, company, search]);
 
   async function handleDelete(e, problem) {
     e.stopPropagation();
@@ -193,7 +233,7 @@ export default function ProblemsPage() {
           <div className="flex items-center justify-between mb-8">
             <div>
               <h1 className="text-3xl font-black text-white tracking-tight">Problem Bank</h1>
-              <p className="text-slate-500 text-sm mt-1">{problems.length} problem{problems.length !== 1 ? "s" : ""} available</p>
+              <p className="text-slate-500 text-sm mt-1">{total} problem{total !== 1 ? "s" : ""} available</p>
             </div>
             <motion.button
               onClick={() => setShowCreate(true)}
@@ -225,9 +265,17 @@ export default function ProblemsPage() {
             </div>
             <div className="relative">
               <select value={topic} onChange={(e) => setTopic(e.target.value)}
-                className="appearance-none pl-3 pr-8 py-2.5 bg-white/[0.03] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-all">
-                <option value="all">All Topics</option>
-                {TOPICS.map((t) => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+                className="appearance-none pl-3 pr-8 py-2.5 bg-[#0a0818] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-all">
+                <option value="all" className="bg-[#0a0818] text-white">All Topics</option>
+                {TOPICS.map((t) => <option key={t} value={t} className="bg-[#0a0818] text-white">{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+              </select>
+              <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+            </div>
+            <div className="relative">
+              <select value={company} onChange={(e) => setCompany(e.target.value)}
+                className="appearance-none pl-3 pr-8 py-2.5 bg-[#0a0818] border border-white/[0.07] hover:border-white/[0.12] rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-violet-500/30 transition-all">
+                <option value="all" className="bg-[#0a0818] text-white">All Companies</option>
+                {COMPANIES.map((c) => <option key={c} value={c} className="bg-[#0a0818] text-white capitalize">{c.charAt(0).toUpperCase() + c.slice(1)}</option>)}
               </select>
               <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
             </div>
@@ -248,42 +296,65 @@ export default function ProblemsPage() {
                   <p className="text-slate-500">No problems found</p>
                 </div>
               ) : (
-                <div className="space-y-1.5">
-                  {problems.map((problem) => (
-                    <motion.div
-                      key={problem.id}
-                      onClick={() => setSelectedProblem(problem)}
-                      whileHover={{ x: 2 }}
-                      className={`flex items-center justify-between p-4 rounded-xl cursor-pointer border transition-all ${
-                        selectedProblem?.id === problem.id
-                          ? "bg-violet-500/10 border-violet-500/30"
-                          : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.12]"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <h3 className="text-white text-sm font-medium truncate">{problem.title}</h3>
-                        {problem.isOwn && (
-                          <span className="text-[10px] px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-md flex-shrink-0">Mine</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-                        <span className="text-slate-600 text-xs capitalize hidden sm:inline">{problem.topic}</span>
-                        <span className={`text-[11px] px-2 py-0.5 rounded-lg border capitalize font-medium ${DIFF_CLS[problem.difficulty] || ""}`}>
-                          {problem.difficulty}
-                        </span>
-                        {problem.isOwn && (
-                          <button
-                            onClick={(e) => handleDelete(e, problem)}
-                            disabled={deleting === problem.id}
-                            className="p-1.5 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all disabled:opacity-40"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        )}
-                      </div>
-                    </motion.div>
-                  ))}
-                </div>
+                <>
+                  <div className="space-y-1.5">
+                    {problems.map((problem) => (
+                      <motion.div
+                        key={problem.id}
+                        onClick={() => setSelectedProblem(problem)}
+                        whileHover={{ x: 2 }}
+                        className={`flex items-center justify-between p-4 rounded-xl cursor-pointer border transition-all ${
+                          selectedProblem?.id === problem.id
+                            ? "bg-violet-500/10 border-violet-500/30"
+                            : "bg-white/[0.02] border-white/[0.06] hover:border-white/[0.12]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          <h3 className="text-white text-sm font-medium truncate">{problem.title}</h3>
+                          {problem.isOwn && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-md flex-shrink-0">Mine</span>
+                          )}
+                          {problem.isPublic && (
+                            <span className="text-[10px] px-1.5 py-0.5 bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 rounded-md flex-shrink-0">Public</span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 flex-shrink-0 ml-3">
+                          {problem.estimatedTime && (
+                            <span className="text-slate-600 text-xs hidden lg:inline">{problem.estimatedTime}m</span>
+                          )}
+                          <span className="text-slate-600 text-xs capitalize hidden sm:inline">{problem.topic}</span>
+                          <span className={`text-[11px] px-2 py-0.5 rounded-lg border capitalize font-medium ${DIFF_CLS[problem.difficulty] || ""}`}>
+                            {problem.difficulty}
+                          </span>
+                          {problem.isOwn && (
+                            <button
+                              onClick={(e) => handleDelete(e, problem)}
+                              disabled={deleting === problem.id}
+                              className="p-1.5 text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-all disabled:opacity-40"
+                            >
+                              <Trash2 size={12} />
+                            </button>
+                          )}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+
+                  {/* Pagination */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-center gap-3 mt-6">
+                      <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
+                        className="p-2 rounded-xl border border-white/[0.07] text-slate-400 hover:text-white hover:border-white/[0.15] disabled:opacity-30 transition-all">
+                        <ChevronLeft size={15} />
+                      </button>
+                      <span className="text-slate-400 text-sm">Page {page} of {totalPages}</span>
+                      <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
+                        className="p-2 rounded-xl border border-white/[0.07] text-slate-400 hover:text-white hover:border-white/[0.15] disabled:opacity-30 transition-all">
+                        <ChevronRight size={15} />
+                      </button>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -303,14 +374,32 @@ export default function ProblemsPage() {
                     </button>
                   </div>
 
-                  <div className="flex items-center gap-2 mb-5">
+                  <div className="flex flex-wrap items-center gap-2 mb-5">
                     <span className={`text-xs px-2.5 py-1 rounded-lg border capitalize font-medium ${DIFF_CLS[selectedProblem.difficulty] || ""}`}>
                       {selectedProblem.difficulty}
                     </span>
                     <span className="text-xs px-2.5 py-1 bg-white/[0.04] border border-white/[0.07] text-slate-400 rounded-lg capitalize">
                       {selectedProblem.topic}
                     </span>
+                    {selectedProblem.estimatedTime && (
+                      <span className="text-xs px-2.5 py-1 bg-white/[0.04] border border-white/[0.07] text-slate-400 rounded-lg">
+                        ~{selectedProblem.estimatedTime}m
+                      </span>
+                    )}
+                    {selectedProblem.companies?.map((c) => (
+                      <span key={c} className="text-xs px-2 py-0.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-lg capitalize">{c}</span>
+                    ))}
                   </div>
+
+                  {selectedProblem.tags?.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mb-4">
+                      {selectedProblem.tags.map((tag) => (
+                        <span key={tag.id || tag.name} className="text-[11px] px-2 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-md">
+                          #{tag.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
 
                   <pre className="text-slate-300 text-sm whitespace-pre-wrap leading-relaxed mb-5 font-sans">
                     {selectedProblem.description}

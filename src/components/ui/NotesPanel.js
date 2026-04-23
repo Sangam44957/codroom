@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 export default function NotesPanel({ roomId }) {
   const [notes, setNotes] = useState("");
@@ -23,15 +23,7 @@ export default function NotesPanel({ roomId }) {
     loadNotes();
   }, [roomId]);
 
-  // Auto-save 3s after last keystroke, skip the initial load
-  useEffect(() => {
-    if (initialLoadRef.current) return;
-    const timer = setTimeout(() => saveNotes(), 3000);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [notes]);
-
-  async function saveNotes() {
+  const saveNotes = useCallback(async () => {
     setSaving(true);
     try {
       await fetch(`/api/rooms/${roomId}/notes`, {
@@ -45,7 +37,14 @@ export default function NotesPanel({ roomId }) {
     } finally {
       setSaving(false);
     }
-  }
+  }, [roomId, notes]);
+
+  // Auto-save 3s after last keystroke, skip the initial load
+  useEffect(() => {
+    if (initialLoadRef.current) return;
+    const timer = setTimeout(() => saveNotes(), 3000);
+    return () => clearTimeout(timer);
+  }, [notes, saveNotes]);
 
   function formatTime(date) {
     return date.toLocaleTimeString("en-US", {

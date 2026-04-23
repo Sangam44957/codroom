@@ -5,8 +5,14 @@ const fs   = require("fs");
 const path = require("path");
 
 // ── Pull source text ──────────────────────────────────────────────────────────
-const reportSrc = fs.readFileSync(
+const reportRouteSrc = fs.readFileSync(
   path.resolve(__dirname, "../app/api/interviews/[interviewId]/report/route.js"), "utf8"
+);
+const serviceSrc = fs.readFileSync(
+  path.resolve(__dirname, "../services/interview.service.js"), "utf8"
+);
+const repositorySrc = fs.readFileSync(
+  path.resolve(__dirname, "../repositories/interview.repository.js"), "utf8"
 );
 const groqSrc = fs.readFileSync(
   path.resolve(__dirname, "../lib/groq.js"), "utf8"
@@ -15,25 +21,25 @@ const groqSrc = fs.readFileSync(
 // ── Structural checks ─────────────────────────────────────────────────────────
 describe("report route — source checks", () => {
   it("rejects generation when no code was submitted", () => {
-    expect(reportSrc).toMatch(/No code was submitted/);
-    expect(reportSrc).toMatch(/status: 400/);
+    expect(serviceSrc).toMatch(/No code was submitted/);
+    expect(serviceSrc).toMatch(/status: 400/);
   });
 
   it("is idempotent — returns existing report without regenerating", () => {
-    expect(reportSrc).toMatch(/interview\.report/);
-    expect(reportSrc).toMatch(/Return existing report/i);
+    expect(serviceSrc).toMatch(/interview\.report/);
+    expect(serviceSrc).toMatch(/Return existing report/i);
   });
 
   it("only interview owner can generate report", () => {
-    expect(reportSrc).toMatch(/requireInterviewOwner/);
+    expect(reportRouteSrc).toMatch(/requireInterviewOwner/);
   });
 
-  it("persists report via prisma aIReport.create", () => {
-    expect(reportSrc).toMatch(/aIReport\.create/);
+  it("persists report via createReport", () => {
+    expect(repositorySrc).toMatch(/createReport/);
   });
 
   it("updates interview status to evaluated after report creation", () => {
-    expect(reportSrc).toMatch(/evaluated/);
+    expect(serviceSrc).toMatch(/evaluated/);
   });
 });
 

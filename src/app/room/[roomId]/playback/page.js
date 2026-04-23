@@ -1,184 +1,149 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Editor from "@monaco-editor/react";
 import {
   SkipBack, SkipForward, Play, Pause, ChevronLeft,
-  ChevronRight, Clock, Film, Layers, List,
+  ChevronRight, Clock, Film, Layers, List, BarChart2,
 } from "lucide-react";
 
-// ── Event metadata ────────────────────────────────────────────────────────────
-const EVT_META = {
+// ── Event / timeline-item metadata ───────────────────────────────────────────
+const ITEM_META = {
   run_pass:        { color: "#22c55e", dot: "bg-emerald-500", label: "Run passed" },
   run_fail:        { color: "#ef4444", dot: "bg-rose-500",    label: "Run failed" },
   language_change: { color: "#a78bfa", dot: "bg-violet-400",  label: "Language" },
+  note:            { color: "#f59e0b", dot: "bg-amber-400",   label: "Note" },
+  code:            { color: "#64748b", dot: "bg-slate-500",   label: "Code" },
   default:         { color: "#f59e0b", dot: "bg-amber-400",   label: "Event" },
 };
 
-function evtMeta(type) { return EVT_META[type] ?? EVT_META.default; }
+function itemMeta(type) { return ITEM_META[type] ?? ITEM_META.default; }
 
-// ── Build merged timeline ─────────────────────────────────────────────────────
-// Returns an array of frames sorted by timestamp.
-// Each frame: { timestamp, code, language, events[] }
-// events[] = all InterviewEvents that fall between this frame and the next.
-function buildTimeline(snapshots, events, baseLanguage) {
-  if (!snapshots.length) return [];
+// ── Derive current code + language from unified timeline ──────────────────────
+function deriveFrame(timeline, index, baseLanguage) {
+  let code = "";
+  let language = baseLanguage;
+  for (let i = 0; i <= index; i++) {
+    const item = timeline[i];
+    if (item.type === "code") code = item.data.code;
+    if (item.type === "language_change") language = item.data.label;
+  }
+  return { code, language };
+}
 
-  // Sort both by timestamp ascending (they should already be, but be safe)
-  const snaps = [...snapshots].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp));
-  const evts  = [...events].sort((a, b) =>
-    new Date(a.timestamp) - new Date(b.timestamp));
-
-  // Walk through snapshots; for each frame derive the language by scanning
-  // all language_change events that occurred at or before this snapshot.
-  const frames = snaps.map((snap, i) => {
-    const snapTs = new Date(snap.timestamp).getTime();
-
-    // Language = last language_change event at or before this snapshot
-    let lang = baseLanguage;
-    for (const e of evts) {
-      if (e.type === "language_change" && new Date(e.timestamp).getTime() <= snapTs) {
-        lang = e.label;
-      }
-    }
-
-    // Events that "belong" to this frame = events between this snapshot and the next
-    const nextTs = snaps[i + 1]
-      ? new Date(snaps[i + 1].timestamp).getTime()
-      : Infinity;
-    const frameEvts = evts.filter((e) => {
-      const t = new Date(e.timestamp).getTime();
-      return t >= snapTs && t < nextTs;
-    });
-
-    return { timestamp: snap.timestamp, code: snap.code, language: lang, events: frameEvts };
+function formatTime(ts) {
+  return new Date(ts).toLocaleTimeString("en-US", {
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
   });
+}
 
-  return frames;
+function formatDuration(s) {
+  if (!s) return "0m";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function formatMs(ms) {
+  const m = Math.floor(ms / 60_000);
+  return m > 0 ? `~${m}m` : "<1m";
 }
 
 export default function PlaybackPage() {
   const { roomId } = useParams();
   const router = useRouter();
 
-  const [room, setRoom]           = useState(null);
-  const [timeline, setTimeline]   = useState([]);
-  const [allEvents, setAllEvents] = useState([]);
+  const [data, setData]           = useState(null); // full playback payload
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState("");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speed, setSpeed]         = useState(1);
   const [showEvents, setShowEvents] = useState(true);
+  const [showStats, setShowStats] = useState(false);
 
-  const timeoutRef  = useRef(null);
+  const timeoutRef   = useRef(null);
   const eventListRef = useRef(null);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchData(); }, []);
+  const fetchData = useCallback(async () => {
+    try {
+      // Step 1: get room to find interviewId
+      const roomRes  = await fetch(`/api/rooms/${roomId}`);
+      const roomData = await roomRes.json();
+      if (!roomRes.ok) {
+        setError(roomRes.status === 403
+          ? "Access denied. Only the interviewer can view playback."
+          : "Room not found");
+        return;
+      }
+      if (!roomData.room.interview) { setError("No interview found for this room."); return; }
+
+      // Step 2: single playback endpoint
+      const interviewId = roomData.room.interview.id;
+      const pbRes  = await fetch(`/api/interviews/${interviewId}/playback`);
+      const pbData = await pbRes.json();
+      if (!pbRes.ok) { setError(pbData.error || "Failed to load playback data."); return; }
+      if (!pbData.timeline?.filter((t) => t.type === "code").length) {
+        setError("No recording found. The interview may not have had any code typed, or snapshots were not captured.");
+        return;
+      }
+
+      setData({ ...pbData, roomTitle: roomData.room.title });
+    } catch { setError("Failed to load playback data."); }
+    finally  { setLoading(false); }
+  }, [roomId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   // Playback ticker
   useEffect(() => {
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
-    if (isPlaying && timeline.length > 1) {
-      if (currentIndex >= timeline.length - 1) { setIsPlaying(false); return; }
-      timeoutRef.current = setTimeout(() => setCurrentIndex((p) => p + 1), 1000 / speed);
-    }
+    if (!isPlaying || !data) return;
+    const timeline = data.timeline;
+    if (currentIndex >= timeline.length - 1) { setIsPlaying(false); return; }
+    timeoutRef.current = setTimeout(() => setCurrentIndex((p) => p + 1), 1000 / speed);
     return () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); };
-  }, [isPlaying, currentIndex, speed, timeline.length]);
+  }, [isPlaying, currentIndex, speed, data]);
 
-  // Auto-scroll event list to keep active event visible
+  // Auto-scroll sidebar
   useEffect(() => {
     if (!eventListRef.current) return;
     const active = eventListRef.current.querySelector("[data-active=\"true\"]");
     if (active) active.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [currentIndex]);
 
-  async function fetchData() {
-    try {
-      const roomRes  = await fetch(`/api/rooms/${roomId}`);
-      const roomData = await roomRes.json();
-      if (!roomRes.ok) { setError("Room not found"); return; }
-      setRoom(roomData.room);
-      if (!roomData.room.interview) { setError("No interview found for this room."); return; }
-
-      const interviewId = roomData.room.interview.id;
-
-      // Fetch all snapshots (paginated)
-      const allSnapshots = [];
-      let snapCursor = null;
-      do {
-        const url = `/api/interviews/${interviewId}/snapshots?limit=200${snapCursor ? `&cursor=${snapCursor}` : ""}`;
-        const res  = await fetch(url);
-        if (!res.ok) break;
-        const data = await res.json();
-        allSnapshots.push(...(data.snapshots || []));
-        snapCursor = data.nextCursor;
-      } while (snapCursor);
-
-      if (!allSnapshots.length) {
-        setError("No recording found. Make sure code was typed during the interview.");
-        return;
-      }
-
-      // Fetch all events (paginated)
-      const evts = [];
-      let evtCursor = null;
-      do {
-        const url = `/api/interviews/${interviewId}/events?limit=500${evtCursor ? `&cursor=${evtCursor}` : ""}`;
-        const res  = await fetch(url);
-        if (!res.ok) break;
-        const data = await res.json();
-        evts.push(...(data.events || []));
-        evtCursor = data.nextCursor;
-      } while (evtCursor);
-
-      setAllEvents(evts);
-      setTimeline(buildTimeline(
-        allSnapshots,
-        evts,
-        roomData.room.interview.language || "javascript",
-      ));
-    } catch { setError("Failed to load playback data."); }
-    finally  { setLoading(false); }
-  }
-
   function togglePlay() {
-    if (currentIndex >= timeline.length - 1) { setCurrentIndex(0); setIsPlaying(true); }
+    if (!data) return;
+    if (currentIndex >= data.timeline.length - 1) { setCurrentIndex(0); setIsPlaying(true); }
     else setIsPlaying((p) => !p);
   }
 
-  function formatTime(ts) {
-    return new Date(ts).toLocaleTimeString("en-US", {
-      hour: "2-digit", minute: "2-digit", second: "2-digit",
-    });
-  }
+  const frame = useMemo(() => {
+    if (!data) return { code: "", language: "javascript" };
+    return deriveFrame(data.timeline, currentIndex, data.interview.language);
+  }, [data, currentIndex]);
 
-  function formatDuration(s) {
-    if (!s) return "0m";
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
-  }
+  // Sidebar items = all non-code timeline items (events + notes)
+  const sidebarItems = useMemo(() => {
+    if (!data) return [];
+    return data.timeline
+      .map((item, i) => ({ ...item, timelineIndex: i }))
+      .filter((item) => item.type !== "code");
+  }, [data]);
 
-  // Flat list of all events with the frame index they belong to (for sidebar)
-  const sidebarEvents = useMemo(() => {
-    const out = [];
-    timeline.forEach((frame, fi) => {
-      frame.events.forEach((e) => out.push({ ...e, frameIndex: fi }));
-    });
-    return out;
-  }, [timeline]);
-
-  // Which sidebar event is "active" = last event at or before currentIndex
   const activeSidebarIdx = useMemo(() => {
     let last = -1;
-    for (let i = 0; i < sidebarEvents.length; i++) {
-      if (sidebarEvents[i].frameIndex <= currentIndex) last = i;
+    for (let i = 0; i < sidebarItems.length; i++) {
+      if (sidebarItems[i].timelineIndex <= currentIndex) last = i;
     }
     return last;
-  }, [sidebarEvents, currentIndex]);
+  }, [sidebarItems, currentIndex]);
+
+  const timeline   = data?.timeline ?? [];
+  const progress   = timeline.length > 1 ? (currentIndex / (timeline.length - 1)) * 100 : 0;
+  const startTs    = timeline.length ? new Date(timeline[0].timestamp).getTime() : 0;
+  const endTs      = timeline.length ? new Date(timeline[timeline.length - 1].timestamp).getTime() : 0;
+  const stats      = data?.stats;
 
   if (loading) {
     return (
@@ -212,11 +177,6 @@ export default function PlaybackPage() {
     );
   }
 
-  const frame    = timeline[currentIndex];
-  const progress = timeline.length > 1 ? (currentIndex / (timeline.length - 1)) * 100 : 0;
-  const startTs  = timeline.length ? new Date(timeline[0].timestamp).getTime() : 0;
-  const endTs    = timeline.length ? new Date(timeline[timeline.length - 1].timestamp).getTime() : 0;
-
   return (
     <div className="h-screen flex flex-col bg-[#080810] overflow-hidden">
 
@@ -228,23 +188,22 @@ export default function PlaybackPage() {
             <ChevronLeft size={18} />
           </button>
           <Film size={14} className="text-violet-400 flex-shrink-0" />
-          <span className="text-slate-300 text-sm font-medium truncate">{room?.title}</span>
+          <span className="text-slate-300 text-sm font-medium truncate">{data?.roomTitle}</span>
           <span className="hidden sm:inline text-xs px-2 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-full flex-shrink-0">
             Playback
           </span>
-          {/* Live language badge */}
-          {frame?.language && (
+          {frame.language && (
             <span className="hidden sm:inline text-xs px-2 py-0.5 bg-white/[0.04] border border-white/[0.07] text-slate-400 rounded-full font-mono flex-shrink-0">
               {frame.language}
             </span>
           )}
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-slate-500 flex-shrink-0">
-          {room?.interview && (
+        <div className="flex items-center gap-2 text-xs text-slate-500 flex-shrink-0">
+          {data?.interview && (
             <>
               <span className="hidden sm:flex items-center gap-1.5">
-                <Clock size={11} /> {formatDuration(room.interview.duration)}
+                <Clock size={11} /> {formatDuration(data.interview.duration)}
               </span>
               <span className="hidden sm:flex items-center gap-1.5">
                 <Layers size={11} /> {timeline.length} frames
@@ -252,13 +211,22 @@ export default function PlaybackPage() {
             </>
           )}
           <button
-            onClick={() => setShowEvents((v) => !v)}
+            onClick={() => { setShowStats((v) => !v); setShowEvents(false); }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all ${
+              showStats
+                ? "bg-cyan-500/10 border-cyan-500/20 text-cyan-400"
+                : "bg-white/[0.04] border-white/[0.07] text-slate-500 hover:text-white"
+            }`}
+          >
+            <BarChart2 size={12} /> Stats
+          </button>
+          <button
+            onClick={() => { setShowEvents((v) => !v); setShowStats(false); }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all ${
               showEvents
                 ? "bg-violet-500/10 border-violet-500/20 text-violet-400"
                 : "bg-white/[0.04] border-white/[0.07] text-slate-500 hover:text-white"
             }`}
-            title="Toggle event timeline"
           >
             <List size={12} /> Events
           </button>
@@ -269,7 +237,7 @@ export default function PlaybackPage() {
         </div>
       </div>
 
-      {/* ── Body: editor + optional event sidebar ── */}
+      {/* ── Body ── */}
       <div className="flex-1 flex overflow-hidden min-h-0">
 
         {/* Editor */}
@@ -278,8 +246,8 @@ export default function PlaybackPage() {
             style={{ boxShadow: "inset 0 0 80px rgba(0,0,0,0.5)" }} />
           <Editor
             height="100%"
-            language={frame?.language || "javascript"}
-            value={frame?.code ?? ""}
+            language={frame.language || "javascript"}
+            value={frame.code ?? ""}
             theme="vs-dark"
             options={{
               readOnly: true,
@@ -295,22 +263,77 @@ export default function PlaybackPage() {
           />
         </div>
 
-        {/* Event sidebar */}
-        {showEvents && sidebarEvents.length > 0 && (
+        {/* Stats panel */}
+        {showStats && stats && (
+          <div className="w-64 flex-shrink-0 border-l border-white/[0.05] bg-[#0a0a12] flex flex-col overflow-y-auto">
+            <div className="px-4 py-3 border-b border-white/[0.05] flex-shrink-0">
+              <span className="text-xs text-slate-500 font-mono uppercase tracking-widest">Session Stats</span>
+            </div>
+            <div className="p-4 space-y-3">
+              {[
+                { label: "Snapshots",       value: stats.totalSnapshots },
+                { label: "Runs Passed",     value: stats.runsPassed,  color: "text-emerald-400" },
+                { label: "Runs Failed",     value: stats.runsFailed,  color: "text-rose-400" },
+                { label: "Thinking Time",   value: formatMs(stats.estimatedThinkingTimeMs) },
+                { label: "Total Events",    value: stats.totalEvents },
+              ].map(({ label, value, color }) => (
+                <div key={label} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
+                  <span className="text-slate-500 text-xs">{label}</span>
+                  <span className={`text-sm font-semibold ${color || "text-white"}`}>{value}</span>
+                </div>
+              ))}
+
+              {data?.problems?.length > 0 && (
+                <div className="pt-2">
+                  <p className="text-xs text-slate-600 uppercase tracking-widest mb-2">Problems</p>
+                  {data.problems.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between py-1.5">
+                      <span className="text-slate-400 text-xs truncate flex-1">{p.title}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border capitalize ml-2 flex-shrink-0 ${
+                        p.difficulty === "easy" ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/10"
+                        : p.difficulty === "hard" ? "text-rose-400 border-rose-500/20 bg-rose-500/10"
+                        : "text-amber-400 border-amber-500/20 bg-amber-500/10"
+                      }`}>{p.difficulty}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {data?.report && (
+                <div className="pt-2 border-t border-white/[0.05]">
+                  <p className="text-xs text-slate-600 uppercase tracking-widest mb-2">AI Report</p>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 text-xs">Overall Score</span>
+                    <span className="text-white font-bold">{data.report.overallScore}/100</span>
+                  </div>
+                  <div className="flex items-center justify-between mt-1">
+                    <span className="text-slate-500 text-xs">Recommendation</span>
+                    <span className="text-violet-400 text-xs font-medium capitalize">
+                      {data.report.recommendation?.replace(/_/g, " ").toLowerCase()}
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Event / notes sidebar */}
+        {showEvents && sidebarItems.length > 0 && (
           <div className="w-56 flex-shrink-0 border-l border-white/[0.05] bg-[#0a0a12] flex flex-col">
             <div className="px-3 py-2 border-b border-white/[0.05] flex-shrink-0">
               <span className="text-xs text-slate-500 font-mono uppercase tracking-widest">Timeline</span>
             </div>
             <div ref={eventListRef} className="flex-1 overflow-y-auto py-1">
-              {sidebarEvents.map((e, i) => {
-                const meta   = evtMeta(e.type);
+              {sidebarItems.map((item, i) => {
+                const meta   = itemMeta(item.type);
                 const active = i === activeSidebarIdx;
-                const past   = e.frameIndex <= currentIndex;
+                const past   = item.timelineIndex <= currentIndex;
                 return (
                   <button
-                    key={e.id ?? i}
+                    key={i}
                     data-active={active}
-                    onClick={() => { setIsPlaying(false); setCurrentIndex(e.frameIndex); }}
+                    onClick={() => { setIsPlaying(false); setCurrentIndex(item.timelineIndex); }}
                     className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${
                       active
                         ? "bg-white/[0.06] text-white"
@@ -322,10 +345,12 @@ export default function PlaybackPage() {
                     <span className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${meta.dot} ${past ? "" : "opacity-30"}`} />
                     <div className="min-w-0">
                       <div className="text-xs font-medium truncate" style={{ color: active ? meta.color : undefined }}>
-                        {e.type === "language_change" ? `→ ${e.label}` : meta.label}
+                        {item.type === "language_change" ? `→ ${item.data.label}`
+                          : item.type === "note" ? `📝 ${item.data.content?.slice(0, 40)}…`
+                          : meta.label}
                       </div>
                       <div className="text-[10px] text-slate-600 font-mono mt-0.5">
-                        {formatTime(e.timestamp)}
+                        {formatTime(item.timestamp)}
                       </div>
                     </div>
                   </button>
@@ -340,26 +365,25 @@ export default function PlaybackPage() {
       <div className="bg-[#0a0a12] border-t border-white/[0.05] px-5 py-4 flex-shrink-0">
         <div className="max-w-4xl mx-auto">
 
-          {/* Timeline scrubber */}
+          {/* Scrubber */}
           <div className="flex items-center gap-3 mb-4">
             <span className="text-xs text-slate-600 font-mono w-20 flex-shrink-0">
-              {frame ? formatTime(frame.timestamp) : "--:--:--"}
+              {timeline[currentIndex] ? formatTime(timeline[currentIndex].timestamp) : "--:--:--"}
             </span>
 
             <div className="flex-1 relative h-6 flex items-center">
-              {/* Track */}
               <div className="absolute inset-x-0 h-1.5 bg-white/[0.06] rounded-full overflow-hidden">
                 <div className="h-full bg-gradient-to-r from-violet-500 to-cyan-500 rounded-full transition-all"
                   style={{ width: `${progress}%` }} />
               </div>
 
-              {/* Event markers on scrubber */}
-              {timeline.length > 1 && allEvents.map((evt, i) => {
-                const t   = new Date(evt.timestamp).getTime();
+              {/* Event markers */}
+              {timeline.length > 1 && sidebarItems.map((item, i) => {
+                const t   = new Date(item.timestamp).getTime();
                 const pct = endTs > startTs ? ((t - startTs) / (endTs - startTs)) * 100 : 0;
-                const { color } = evtMeta(evt.type);
+                const { color } = itemMeta(item.type);
                 return (
-                  <div key={i} title={`${evt.label} @ ${formatTime(evt.timestamp)}`}
+                  <div key={i} title={`${item.type} @ ${formatTime(item.timestamp)}`}
                     style={{
                       position: "absolute", left: `${pct}%`,
                       width: 6, height: 6, borderRadius: "50%",
@@ -369,7 +393,6 @@ export default function PlaybackPage() {
                 );
               })}
 
-              {/* Scrubber input */}
               <input type="range" min="0" max={Math.max(0, timeline.length - 1)} value={currentIndex}
                 onChange={(e) => { setIsPlaying(false); setCurrentIndex(parseInt(e.target.value, 10)); }}
                 className="absolute inset-x-0 w-full opacity-0 cursor-pointer h-6"
@@ -413,7 +436,6 @@ export default function PlaybackPage() {
               <SkipForward size={16} />
             </button>
 
-            {/* Speed */}
             <div className="flex items-center gap-1.5 ml-3 pl-4 border-l border-white/[0.06]">
               <span className="text-xs text-slate-600">Speed</span>
               {[0.5, 1, 2, 4].map((s) => (

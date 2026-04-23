@@ -584,7 +584,10 @@ Constraints:
 async function main() {
   console.log("🌱 Seeding problems...\n");
 
-  // Clear existing problems (optional)
+  // Clear existing problems — delete room_problems links first to avoid FK violation
+  await prisma.roomProblem.deleteMany({
+    where: { problem: { createdById: null } },
+  });
   await prisma.problem.deleteMany({
     where: { createdById: null },
   });

@@ -62,7 +62,7 @@ export default function RegisterPage() {
   const fields = [
     { key: "name", label: "Full Name", type: "text", placeholder: "Jane Doe", icon: User },
     { key: "email", label: "Email", type: "email", placeholder: "you@company.com", icon: Mail },
-    { key: "password", label: "Password", type: "password", placeholder: "Minimum 6 characters", icon: Lock },
+    { key: "password", label: "Password", type: "password", placeholder: "Min 8 chars, 1 uppercase, 1 number", icon: Lock },
   ];
 
   return (

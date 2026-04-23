@@ -8,6 +8,7 @@ export async function findRoomById(id) {
       problem: true,
       problems: { include: { problem: true }, orderBy: { order: "asc" } },
       interview: { include: { report: true } },
+      template: { select: { id: true, name: true, durationMinutes: true } },
     },
   });
 }
@@ -63,22 +64,18 @@ export async function updateRoom(id, data) {
 }
 
 export async function deleteRoomCascade(roomId, interviewId) {
-  const ops = [];
-  if (interviewId) {
-    ops.push(
-      prisma.codeSnapshot.deleteMany({ where: { interviewId } }),
-      prisma.interviewEvent.deleteMany({ where: { interviewId } }),
-      prisma.interviewerNote.deleteMany({ where: { interviewId } }),
-      prisma.aIReport.deleteMany({ where: { interviewId } }),
-      prisma.interview.delete({ where: { id: interviewId } }),
-    );
-  }
-  ops.push(
-    prisma.chatMessage.deleteMany({ where: { roomId } }),
-    prisma.roomProblem.deleteMany({ where: { roomId } }),
-    prisma.room.delete({ where: { id: roomId } }),
-  );
-  return prisma.$transaction(ops);
+  return prisma.$transaction(async (tx) => {
+    if (interviewId) {
+      await tx.codeSnapshot.deleteMany({ where: { interviewId } });
+      await tx.interviewEvent.deleteMany({ where: { interviewId } });
+      await tx.interviewerNote.deleteMany({ where: { interviewId } });
+      await tx.aIReport.deleteMany({ where: { interviewId } });
+      await tx.interview.delete({ where: { id: interviewId } });
+    }
+    await tx.chatMessage.deleteMany({ where: { roomId } });
+    await tx.roomProblem.deleteMany({ where: { roomId } });
+    await tx.room.delete({ where: { id: roomId } });
+  });
 }
 
 export async function findMessagesByRoom(roomId, limit) {

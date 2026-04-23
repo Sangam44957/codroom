@@ -13,9 +13,10 @@ import VideoPanel from "@/components/video/VideoPanel";
 import Whiteboard from "@/components/whiteboard/Whiteboard";
 import useSocket from "@/hooks/useSocket";
 import useSecurityMonitor from "@/hooks/useSecurityMonitor";
+import { useRoomShortcuts, ShortcutHelpModal } from "@/components/room/RoomShortcuts";
 import { toast } from "sonner";
 import {
-  Play, Square, SkipForward, Wifi, WifiOff, Clock,
+  Play, Square, SkipForward, Wifi, WifiOff, Clock, X,
   MessageSquare, StickyNote, Video, Shield, ChevronLeft,
   ChevronRight, GripVertical, Trash2, LayoutPanelLeft, Lock, Unlock,
   PenLine, Link2, Maximize2, Minimize2,
@@ -72,7 +73,6 @@ export default function RoomPage() {
   const [showProblem, setShowProblem] = useState(true);
   const [showOutput, setShowOutput] = useState(true);
   const [rightTab, setRightTab] = useState("chat");
-  const [showSecurityWarning, setShowSecurityWarning] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [activeProblemIdx, setActiveProblemIdx] = useState(0);
   const [focusMode, setFocusMode] = useState(false);
@@ -83,22 +83,25 @@ export default function RoomPage() {
   // Resizable problem panel width (px)
   const [problemWidth, setProblemWidth] = useState(320);
   const containerRef = useRef(null);
+  const editorFocusRef = useRef(null); // set by CodeEditor via onEditorMount
 
   const [session, setSession] = useState({ userName: "", role: "candidate", joined: false });
   const [interviewId, setInterviewId] = useState(null);
   const [interviewStatus, setInterviewStatus] = useState("waiting");
-  const [timer, setTimer] = useState(0);
+  // countdown timer — null means no timer active
+  const [timerEndsAt, setTimerEndsAt] = useState(null);
+  const [secondsLeft, setSecondsLeft] = useState(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const timerRef = useRef(null);
+  const elapsedRef = useRef(null);
 
   // Drive security monitor from focus mode, not interview status
-  const { violations, warningCount, isFullscreen, isLocked, requestFullscreen } = useSecurityMonitor(
+  const { violations, warningCount, isLocked, unlock, requestFullscreen } = useSecurityMonitor(
     focusMode && session.role === "candidate",
-    (violation) => {
-      setShowSecurityWarning(true);
-      sendMessage(`⚠️ Security: ${violation.details}`);
-    },
+    // Violations go to security panel only — no chat spam
+    null,
     (count) => {
-      // Threshold hit — notify interviewer via chat then auto-end
+      // Only the lock event notifies via chat
       sendMessage(`🔒 Session auto-locked after ${count} security violations.`);
       if (interviewId) {
         fetch(`/api/interviews/${interviewId}/end`, {
@@ -110,14 +113,19 @@ export default function RoomPage() {
     }
   );
 
+  const [remoteCursors, setRemoteCursors] = useState([]);
+
   const {
-    isConnected, serverStateLost, users, messages, timelineEvents,
+    isConnected, serverStateLost, users, messages,
     emitCodeChange, emitLanguageChange, emitCodeOutput, emitTimelineEvent,
     sendMessage, sharePeerId, emitSetInterviewId, emitSetFocusMode,
-    emitCameraToggle,
+    emitCameraToggle, emitMicToggle, emitUnlockCandidate,
     emitWhiteboardDraw, emitWhiteboardClear,
+    emitCursorMove,
+    emitTimerSet, emitTimerExtend, emitTimerClear, onTimerSync,
     onCodeUpdate, onLanguageUpdate, onOutputUpdate, onPeerIdReceived, onInterviewStarted,
     onFocusModeChanged, onWhiteboardDraw, onWhiteboardClear, onRemoteCameraToggle,
+    onRemoteMicToggle, onCandidateUnlocked, onRemoteCursor,
   } = useSocket(session.joined ? roomId : null, session.userName, session.role);
 
   // When server state is lost (restart), push active file back so the room
@@ -133,9 +141,19 @@ export default function RoomPage() {
     onFocusModeChanged((enabled) => setFocusMode(enabled));
   }, [onFocusModeChanged]);
 
+  // When interviewer unlocks, reset candidate lock state and re-enter fullscreen
+  useEffect(() => {
+    onCandidateUnlocked(() => {
+      unlock();
+      // Re-enter fullscreen if focus mode is still active
+      if (document.fullscreenElement === null) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    });
+  }, [onCandidateUnlocked, unlock]);
+
   useEffect(() => {
     onCodeUpdate((remoteCode) => {
-      // Remote code update — patch only the active file
       setFiles((prev) => ({ ...prev, [activeFile]: remoteCode }));
     });
     onLanguageUpdate((l) => setLanguage(l));
@@ -146,33 +164,65 @@ export default function RoomPage() {
     });
   }, [onCodeUpdate, onLanguageUpdate, onOutputUpdate, onInterviewStarted, activeFile]);
 
-  // Fullscreen only when focus mode is active
   useEffect(() => {
-    if (focusMode && session.role === "candidate") requestFullscreen();
+    onRemoteCursor(({ cursor, userId, userName, role }) => {
+      setRemoteCursors((prev) => {
+        const idx = prev.findIndex((c) => c.userId === userId);
+        const entry = { userId, userName, role, cursor };
+        if (idx === -1) return [...prev, entry];
+        const next = [...prev];
+        next[idx] = entry;
+        return next;
+      });
+    });
+  }, [onRemoteCursor]);
+
+  // Remove cursor when user leaves
+  useEffect(() => {
+    const activeUserIds = new Set(users.map((u) => u.id));
+    setRemoteCursors((prev) => prev.filter((c) => activeUserIds.has(c.userId)));
+  }, [users]);
+
+  // Enter fullscreen when focus mode activates, exit when it deactivates
+  useEffect(() => {
+    if (focusMode && session.role === "candidate") {
+      requestFullscreen();
+    } else if (!focusMode && session.role === "candidate") {
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    }
   }, [focusMode, session.role, requestFullscreen]);
 
 
+  // Sync timer from socket — register via ref pattern to avoid setState-in-effect lint error
+  const setTimerEndsAtRef = useRef(setTimerEndsAt);
+  setTimerEndsAtRef.current = setTimerEndsAt;
   useEffect(() => {
-    if (interviewStatus === "in_progress") {
-      timerRef.current = setInterval(() => setTimer((p) => p + 1), 1000);
-    } else {
-      clearInterval(timerRef.current);
+    onTimerSync(({ endsAt }) => setTimerEndsAtRef.current(endsAt));
+  }, [onTimerSync]);
+
+  // Countdown tick
+  useEffect(() => {
+    clearInterval(timerRef.current);
+    if (!timerEndsAt) { setSecondsLeft(null); return; }
+    function tick() {
+      const diff = Math.max(0, Math.round((new Date(timerEndsAt) - Date.now()) / 1000));
+      setSecondsLeft(diff);
     }
+    tick();
+    timerRef.current = setInterval(tick, 1000);
     return () => clearInterval(timerRef.current);
+  }, [timerEndsAt]);
+
+  // Elapsed count-up (only when in_progress, as fallback display when no countdown)
+  useEffect(() => {
+    clearInterval(elapsedRef.current);
+    if (interviewStatus === "in_progress") {
+      elapsedRef.current = setInterval(() => setElapsedSeconds((p) => p + 1), 1000);
+    }
+    return () => clearInterval(elapsedRef.current);
   }, [interviewStatus]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchRoom(); }, []);
-
-  function formatTimer(s) {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  }
-
-  async function fetchRoom() {
+  const fetchRoom = useCallback(async () => {
     try {
       const rawToken = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("joinToken") : null;
@@ -232,6 +282,25 @@ export default function RoomPage() {
       } catch {}
     } catch { setError("Failed to load room"); }
     finally { setLoading(false); }
+  }, [roomId]);
+
+  useEffect(() => { fetchRoom(); }, [fetchRoom]);
+
+  function formatCountdown(s) {
+    if (s === null) return null;
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  }
+
+  function formatElapsed(s) {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   }
 
   async function handleStartInterview() {
@@ -273,22 +342,26 @@ export default function RoomPage() {
   }
 
   async function handleDeleteInterview() {
-    const interviewId2 = room?.interview?.id;
-    if (!interviewId2) return;
+    const id = interviewId || room?.interview?.id;
+    if (!id) return;
     if (!confirm("Delete this interview? This cannot be undone.")) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/interviews/${interviewId2}`, { method: "DELETE" });
+      const res = await fetch(`/api/interviews/${id}`, { method: "DELETE" });
       if (res.ok) { toast.success("Interview deleted"); router.push("/dashboard"); }
       else toast.error("Delete failed.");
     } finally { setDeleting(false); }
   }
 
+  const handleCursorChange = useCallback(
+    (line, column) => emitCursorMove({ line, column }),
+    [emitCursorMove],
+  );
+
   const handleFileChange = useCallback(
     (filename, content) => {
       setFiles((prev) => {
         const next = { ...prev, [filename]: content };
-        // Only emit the active file over the socket (single-stream protocol)
         if (filename === activeFile) emitCodeChange(content);
         return next;
       });
@@ -312,7 +385,7 @@ export default function RoomPage() {
     }, [emitLanguageChange],
   );
 
-  async function handleRunCode() {
+  const handleRunCode = useCallback(async function() {
     const activeCode = files[activeFile] ?? "";
     if (isRunning || !activeCode.trim()) {
       if (!activeCode.trim()) setOutput({ status: "error", output: "No code to run", type: "Error" });
@@ -340,7 +413,17 @@ export default function RoomPage() {
       const result = { status: "error", output: isTimeout ? "Request timed out (15s)." : "Failed to connect to execution server", type: isTimeout ? "Timeout" : "Error" };
       setOutput(result); emitCodeOutput(result);
     } finally { clearTimeout(timeoutId); setIsRunning(false); }
-  }
+  }, [files, activeFile, isRunning, language, emitCodeOutput, emitTimelineEvent]);
+
+  // Keyboard shortcuts
+  const { showShortcutModal, setShowShortcutModal } = useRoomShortcuts({
+    onRunCode: handleRunCode,
+    onRunTests: () => {},
+    onToggleChat: () => setRightTab((t) => t === "chat" ? "video" : "chat"),
+    onToggleWhiteboard: () => setRightTab((t) => t === "board" ? "chat" : "board"),
+    onFocusEditor: () => editorFocusRef.current?.(),
+    onResetLayout: () => { setShowProblem(true); setShowOutput(true); setProblemWidth(320); },
+  });
 
   function handleJoin(e) {
     e.preventDefault();
@@ -442,14 +525,21 @@ export default function RoomPage() {
     board: { icon: PenLine,       label: "Board" },
   };
 
-  return (
-    <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200" onKeyDown={(e) => { if (e.key === "Escape") { setEditorFullscreen(false); setBoardFullscreen(false); } }}>
+  const handleEscapeKey = useCallback((e) => {
+    if (e.key === "Escape") {
+      setEditorFullscreen(false);
+      setBoardFullscreen(false);
+    }
+  }, []);
 
-      {(showSecurityWarning || isLocked) && (
+  return (
+    <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200" onKeyDown={handleEscapeKey}>
+
+      {(warningCount > 0 || isLocked) && (
         <SecurityWarning
           warningCount={warningCount}
           isLocked={isLocked}
-          onDismiss={() => setShowSecurityWarning(false)}
+          onDismiss={() => {}}
         />
       )}
 
@@ -472,10 +562,22 @@ export default function RoomPage() {
 
         {/* Center — timer + status */}
         <div className="flex items-center gap-2 flex-shrink-0">
-          {interviewStatus === "in_progress" && (
+          {interviewStatus === "in_progress" && secondsLeft !== null && (
+            <span className={`flex items-center gap-1.5 font-mono text-xs px-3 py-1 rounded-lg border ${
+              secondsLeft <= 60
+                ? "text-rose-300 bg-rose-500/10 border-rose-500/30 animate-pulse"
+                : secondsLeft <= 300
+                ? "text-amber-300 bg-amber-500/10 border-amber-500/30"
+                : "text-white bg-white/[0.06] border-white/[0.08]"
+            }`}>
+              <Clock size={11} className={secondsLeft <= 60 ? "text-rose-400" : secondsLeft <= 300 ? "text-amber-400" : "text-violet-400"} />
+              {formatCountdown(secondsLeft)}
+            </span>
+          )}
+          {interviewStatus === "in_progress" && secondsLeft === null && (
             <span className="flex items-center gap-1.5 font-mono text-xs text-white bg-white/[0.06] border border-white/[0.08] px-3 py-1 rounded-lg">
               <Clock size={11} className="text-violet-400" />
-              {formatTimer(timer)}
+              {formatElapsed(elapsedSeconds)}
             </span>
           )}
           {interviewStatus === "completed" && (
@@ -522,11 +624,18 @@ export default function RoomPage() {
             <span className="hidden sm:inline">{isConnected ? "Live" : "Off"}</span>
           </span>
 
-          {/* Security violation count — interviewer only, hidden when clean */}
+          {/* Security violation count + unlock button — interviewer only */}
           {isInterviewer && violations.length > 0 && (
-            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-rose-500/10 text-rose-400 border-rose-500/20" title="Security violations detected">
+            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-rose-500/10 text-rose-400 border-rose-500/20">
               <Shield size={10} />
               {violations.length}
+              <button
+                onClick={() => { emitUnlockCandidate(); toast.success("Candidate unlocked"); }}
+                className="ml-1 text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold"
+                title="Unlock candidate"
+              >
+                Unlock
+              </button>
             </span>
           )}
 
@@ -587,6 +696,35 @@ export default function RoomPage() {
         </div>
 
         <div className="flex items-center gap-1.5">
+          {/* Timer controls — interviewer only, during active interview */}
+          {isInterviewer && interviewStatus === "in_progress" && (
+            <div className="flex items-center gap-1">
+              {secondsLeft === null && room?.template?.durationMinutes && (
+                <button
+                  onClick={() => emitTimerSet(room.template.durationMinutes)}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md bg-violet-600/20 border border-violet-500/30 text-violet-300 hover:bg-violet-600/30 transition-all"
+                  title="Start template timer"
+                >
+                  <Clock size={10} /> {room.template.durationMinutes}m
+                </button>
+              )}
+              {[10, 15, 30].map((m) => (
+                <button key={m}
+                  onClick={() => emitTimerExtend(m)}
+                  className="px-2 py-1 text-xs rounded-md bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all"
+                  title={`Add ${m} minutes`}
+                >+{m}m</button>
+              ))}
+              {secondsLeft !== null && (
+                <button
+                  onClick={() => emitTimerClear()}
+                  className="px-2 py-1 text-xs rounded-md text-slate-600 hover:text-rose-400 hover:bg-rose-500/10 transition-all"
+                  title="Remove timer"
+                ><X size={10} /></button>
+              )}
+            </div>
+          )}
+
           {/* Focus mode toggle — interviewer only, only during active interview */}
           {isInterviewer && interviewStatus === "in_progress" && (
             <button
@@ -700,7 +838,7 @@ export default function RoomPage() {
                   </div>
                 )}
                 <div className="flex-1 overflow-hidden">
-                  <ProblemPanel problem={activeProblem} />
+                  <ProblemPanel problem={activeProblem} isCandidate={!isInterviewer} />
                 </div>
               </div>
               <ResizeDivider onDrag={handleProblemResize} />
@@ -719,6 +857,10 @@ export default function RoomPage() {
               onActiveFileChange={setActiveFile}
               onFileChange={handleFileChange}
               onFilesChange={handleFilesChange}
+              onCursorChange={handleCursorChange}
+              remoteCursors={remoteCursors}
+              onRunCode={handleRunCode}
+              onEditorMount={(focusFn) => { editorFocusRef.current = focusFn; }}
             />
           </div>
           {showOutput && (
@@ -760,11 +902,6 @@ export default function RoomPage() {
                 >
                   <meta.icon size={12} />
                   <span className="hidden sm:inline">{meta.label}</span>
-                  {meta.badge > 0 && (
-                    <span className="absolute top-1 right-1 w-3.5 h-3.5 bg-rose-500 text-white text-[9px] rounded-full flex items-center justify-center">
-                      {meta.badge}
-                    </span>
-                  )}
                 </button>
               );
             })}
@@ -795,6 +932,8 @@ export default function RoomPage() {
                   onPeerIdReceived={onPeerIdReceived}
                   emitCameraToggle={emitCameraToggle}
                   onRemoteCameraToggle={onRemoteCameraToggle}
+                  emitMicToggle={emitMicToggle}
+                  onRemoteMicToggle={onRemoteMicToggle}
                 />
               </div>
               {/* Chat below video — fills remaining space */}
@@ -804,6 +943,7 @@ export default function RoomPage() {
             </div>
 
             {/* Whiteboard — stays mounted to preserve canvas state */}
+            {!boardFullscreen && (
             <div className={`flex-1 min-h-0 overflow-hidden ${
               rightTab === "board" ? "flex flex-col" : "invisible pointer-events-none absolute"
             }`}>
@@ -816,6 +956,7 @@ export default function RoomPage() {
                 isFullscreen={boardFullscreen}
               />
             </div>
+            )}
 
             {/* Whiteboard fullscreen overlay */}
             {boardFullscreen && (
@@ -833,6 +974,8 @@ export default function RoomPage() {
           </div>
         </div>
       </div>
+
+      <ShortcutHelpModal open={showShortcutModal} onClose={() => setShowShortcutModal(false)} />
     </div>
   );
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rateLimit";
 import { checkCsrf } from "@/lib/csrf";
 import { register } from "@/services/auth.service";
+import { audit, AuditActions } from "@/lib/audit";
 
 export async function POST(request) {
   const csrf = checkCsrf(request);
@@ -24,6 +25,16 @@ export async function POST(request) {
     const body = await request.json();
     const result = await register(body);
     if (result.error) return NextResponse.json({ error: result.error }, { status: result.status });
+
+    audit({
+      actorId: result.user?.id || null,
+      actorEmail: body.email,
+      actorRole: "interviewer",
+      action: AuditActions.USER_REGISTERED,
+      resource: "user",
+      resourceId: result.user?.id || body.email,
+      request,
+    });
 
     return NextResponse.json(
       result.needsVerification

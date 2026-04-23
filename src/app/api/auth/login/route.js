@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rateLimit";
 import { checkCsrf } from "@/lib/csrf";
 import { login } from "@/services/auth.service";
+import { audit, AuditActions } from "@/lib/audit";
 
 export async function POST(request) {
   const csrf = checkCsrf(request);
@@ -33,6 +34,16 @@ export async function POST(request) {
         { status: result.status }
       );
     }
+
+    audit({
+      actorId: result.user?.id,
+      actorEmail: email,
+      actorRole: "interviewer",
+      action: AuditActions.USER_LOGGED_IN,
+      resource: "user",
+      resourceId: result.user?.id || email,
+      request,
+    });
 
     return NextResponse.json(
       { message: "Login successful", user: result.user },

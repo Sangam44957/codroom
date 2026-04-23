@@ -8,6 +8,7 @@ export async function findInterviewById(id) {
         include: {
           problem: true,
           problems: { include: { problem: true }, orderBy: { order: "asc" } },
+          createdBy: { select: { email: true, name: true } },
         },
       },
       report: true,
@@ -96,4 +97,34 @@ export async function createReport(data) {
 
 export async function updateReport(interviewId, data) {
   return prisma.aIReport.update({ where: { interviewId }, data });
+}
+
+export async function findPlaybackData(interviewId) {
+  const [interview, snapshots, events, notes] = await Promise.all([
+    prisma.interview.findUnique({
+      where: { id: interviewId },
+      include: {
+        room: {
+          include: {
+            problems: { include: { problem: true }, orderBy: { order: "asc" } },
+            problem: true,
+          },
+        },
+        report: true,
+      },
+    }),
+    prisma.codeSnapshot.findMany({
+      where: { interviewId },
+      orderBy: { timestamp: "asc" },
+    }),
+    prisma.interviewEvent.findMany({
+      where: { interviewId },
+      orderBy: { timestamp: "asc" },
+    }),
+    prisma.interviewerNote.findMany({
+      where: { interviewId },
+      orderBy: { createdAt: "asc" },
+    }),
+  ]);
+  return { interview, snapshots, events, notes };
 }
