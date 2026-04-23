@@ -87,12 +87,30 @@ export default function useSocket(roomId, userName, role) {
       console.warn("[socket] connect_error:", err.message);
     });
 
-    socket.on("join-error", ({ message }) => {
+    socket.on("join-error", (data) => {
+      const message = data?.message || "Unknown join error";
       toast.error(`Room error: ${message}`, { id: "socket-join-error" });
       setIsJoined(false);
     });
 
-    socket.on("room-state", ({ code, language, users, messages, interviewId, events, focusMode, timerEndsAt, isEmptyRoom }) => {
+    socket.on("room-state", (data) => {
+      if (!data || typeof data !== 'object') {
+        console.warn('[socket] Invalid room-state payload:', data);
+        return;
+      }
+      
+      const {
+        code,
+        language,
+        users,
+        messages,
+        interviewId,
+        events,
+        focusMode,
+        timerEndsAt,
+        isEmptyRoom
+      } = data;
+      
       setUsers(users || []);
       setMessages(messages?.slice(-MAX_MESSAGES) || []);
       setTimelineEvents((events || []).slice(-MAX_TIMELINE_EVENTS));
@@ -125,12 +143,15 @@ export default function useSocket(roomId, userName, role) {
       if (!reconnectDetectedRef.current) handlersRef.current.onTimerSync?.({ endsAt: timerEndsAt || null });
     });
 
-    socket.on("focus-mode-changed", ({ enabled }) => {
-      handlersRef.current.onFocusModeChanged?.(enabled);
+    socket.on("focus-mode-changed", (data) => {
+      const enabled = data?.enabled;
+      if (typeof enabled === 'boolean') {
+        handlersRef.current.onFocusModeChanged?.(enabled);
+      }
     });
 
-    socket.on("user-joined", ({ users }) => setUsers(users || []));
-    socket.on("user-left", ({ users }) => setUsers(users || []));
+    socket.on("user-joined", (data) => setUsers(data?.users || []));
+    socket.on("user-left", (data) => setUsers(data?.users || []));
 
     socket.on("chat-message", (message) => {
       setMessages((prev) => {
@@ -139,21 +160,53 @@ export default function useSocket(roomId, userName, role) {
       });
     });
 
-    socket.on("code-update", ({ code }) => handlersRef.current.onCodeUpdate?.(code));
-    socket.on("language-update", ({ language }) => handlersRef.current.onLanguageUpdate?.(language));
-    socket.on("output-update", ({ output }) => handlersRef.current.onOutputUpdate?.(output));
+    socket.on("code-update", (data) => {
+      if (data?.code !== undefined) {
+        handlersRef.current.onCodeUpdate?.(data.code);
+      }
+    });
+    socket.on("language-update", (data) => {
+      if (data?.language) {
+        handlersRef.current.onLanguageUpdate?.(data.language);
+      }
+    });
+    socket.on("output-update", (data) => {
+      if (data?.output) {
+        handlersRef.current.onOutputUpdate?.(data.output);
+      }
+    });
     socket.on("timeline-event", (event) => {
       setTimelineEvents((prev) => {
         const next = [...prev, event];
         return next.length > MAX_TIMELINE_EVENTS ? next.slice(-MAX_TIMELINE_EVENTS) : next;
       });
     });
-    socket.on("peer-id-received", ({ peerId }) => handlersRef.current.onPeerIdReceived?.(peerId));
-    socket.on("interview-started", ({ interviewId }) => handlersRef.current.onInterviewStarted?.(interviewId));
-    socket.on("whiteboard-draw", ({ stroke }) => handlersRef.current.onWhiteboardDraw?.(stroke));
+    socket.on("peer-id-received", (data) => {
+      if (data?.peerId) {
+        handlersRef.current.onPeerIdReceived?.(data.peerId);
+      }
+    });
+    socket.on("interview-started", (data) => {
+      if (data?.interviewId) {
+        handlersRef.current.onInterviewStarted?.(data.interviewId);
+      }
+    });
+    socket.on("whiteboard-draw", (data) => {
+      if (data?.stroke) {
+        handlersRef.current.onWhiteboardDraw?.(data.stroke);
+      }
+    });
     socket.on("whiteboard-clear", () => handlersRef.current.onWhiteboardClear?.());
-    socket.on("remote-camera-toggle", ({ isOff }) => handlersRef.current.onRemoteCameraToggle?.(isOff));
-    socket.on("remote-mic-toggle", ({ isMuted }) => handlersRef.current.onRemoteMicToggle?.(isMuted));
+    socket.on("remote-camera-toggle", (data) => {
+      if (typeof data?.isOff === 'boolean') {
+        handlersRef.current.onRemoteCameraToggle?.(data.isOff);
+      }
+    });
+    socket.on("remote-mic-toggle", (data) => {
+      if (typeof data?.isMuted === 'boolean') {
+        handlersRef.current.onRemoteMicToggle?.(data.isMuted);
+      }
+    });
     socket.on("candidate-unlocked", () => handlersRef.current.onCandidateUnlocked?.());
     socket.on("remote-cursor", (data) => handlersRef.current.onRemoteCursor?.(data));
     socket.on("timer-sync", (data) => handlersRef.current.onTimerSync?.(data));
