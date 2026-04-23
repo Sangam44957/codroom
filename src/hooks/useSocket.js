@@ -71,7 +71,7 @@ export default function useSocket(roomId, userName, role) {
       // "io server disconnect" means the server explicitly kicked us — don't auto-reconnect
       if (reason === "io server disconnect") {
         toast.error("Disconnected by server", { id: "socket-disconnect" });
-        socket.connect();
+        // Do not reconnect - server intentionally disconnected us
       } else {
         toast.warning("Connection lost — reconnecting…", { id: "socket-disconnect", duration: Infinity });
       }
