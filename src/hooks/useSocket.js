@@ -5,6 +5,7 @@ import { io } from "socket.io-client";
 import { toast } from "sonner";
 
 const MAX_MESSAGES = 200;
+const MAX_TIMELINE_EVENTS = 500; // Cap timeline events to prevent memory growth
 
 export default function useSocket(roomId, userName, role) {
   const socketRef = useRef(null);
@@ -94,7 +95,7 @@ export default function useSocket(roomId, userName, role) {
     socket.on("room-state", ({ code, language, users, messages, interviewId, events, focusMode, timerEndsAt, isEmptyRoom }) => {
       setUsers(users || []);
       setMessages(messages?.slice(-MAX_MESSAGES) || []);
-      setTimelineEvents(events || []);
+      setTimelineEvents((events || []).slice(-MAX_TIMELINE_EVENTS));
       setIsJoined(true); // Successfully joined room
 
       toast.dismiss("socket-disconnect");
@@ -141,7 +142,12 @@ export default function useSocket(roomId, userName, role) {
     socket.on("code-update", ({ code }) => handlersRef.current.onCodeUpdate?.(code));
     socket.on("language-update", ({ language }) => handlersRef.current.onLanguageUpdate?.(language));
     socket.on("output-update", ({ output }) => handlersRef.current.onOutputUpdate?.(output));
-    socket.on("timeline-event", (event) => setTimelineEvents((prev) => [...prev, event]));
+    socket.on("timeline-event", (event) => {
+      setTimelineEvents((prev) => {
+        const next = [...prev, event];
+        return next.length > MAX_TIMELINE_EVENTS ? next.slice(-MAX_TIMELINE_EVENTS) : next;
+      });
+    });
     socket.on("peer-id-received", ({ peerId }) => handlersRef.current.onPeerIdReceived?.(peerId));
     socket.on("interview-started", ({ interviewId }) => handlersRef.current.onInterviewStarted?.(interviewId));
     socket.on("whiteboard-draw", ({ stroke }) => handlersRef.current.onWhiteboardDraw?.(stroke));
