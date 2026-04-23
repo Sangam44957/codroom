@@ -97,20 +97,25 @@ export default function useSocket(roomId, userName, role) {
       toast.dismiss("socket-disconnect");
       toast.dismiss("socket-connect-error");
 
-      if (reconnectDetectedRef.current && isEmptyRoom) {
-        setServerStateLost(true);
+      // Handle reconnect state sync BEFORE resetting the flag
+      if (reconnectDetectedRef.current) {
+        if (isEmptyRoom) {
+          setServerStateLost(true);
+        } else {
+          // Rehydrate state from server snapshot on reconnect
+          if (code !== undefined) handlersRef.current.onCodeUpdate?.(code);
+          if (language !== undefined) handlersRef.current.onLanguageUpdate?.(language);
+          handlersRef.current.onTimerSync?.({ endsAt: timerEndsAt || null });
+          if (typeof focusMode === "boolean") handlersRef.current.onFocusModeChanged?.(focusMode);
+          setServerStateLost(false);
+        }
+        // Reset reconnect flag AFTER sync logic completes
+        reconnectDetectedRef.current = false;
       } else {
         setServerStateLost(false);
-        reconnectDetectedRef.current = false;
       }
 
-      if (reconnectDetectedRef.current) {
-        if (code !== undefined) handlersRef.current.onCodeUpdate?.(code);
-        if (language !== undefined) handlersRef.current.onLanguageUpdate?.(language);
-        handlersRef.current.onTimerSync?.({ endsAt: timerEndsAt || null });
-        if (typeof focusMode === "boolean") handlersRef.current.onFocusModeChanged?.(focusMode);
-      }
-
+      // Handle initial connection or non-reconnect updates
       if (typeof focusMode === "boolean" && !reconnectDetectedRef.current) handlersRef.current.onFocusModeChanged?.(focusMode);
       if (interviewId && handlersRef.current.onInterviewStarted) handlersRef.current.onInterviewStarted(interviewId);
       if (!reconnectDetectedRef.current) handlersRef.current.onTimerSync?.({ endsAt: timerEndsAt || null });
