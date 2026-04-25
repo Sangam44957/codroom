@@ -74,12 +74,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       setIsFullscreen(isFs);
       if (!isFs && isActive) {
         addViolation("fullscreen_exit", "Candidate exited fullscreen mode");
-        // Re-request fullscreen after a short delay so the violation is recorded
-        // before the browser re-enters fullscreen (requires a user gesture context)
-        setTimeout(() => {
-          if (document.fullscreenElement) return; // already back
-          document.documentElement.requestFullscreen().catch(() => {});
-        }, 800);
+        // Don't auto re-enter fullscreen - let interviewer decide
       }
     }
 
@@ -110,17 +105,31 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
         addViolation("devtools", "Candidate pressed F12");
         e.preventDefault();
       }
-      // Track Ctrl+A for combo detection
+      
       if (e.ctrlKey && e.key === "a") {
         lastSelectAllRef.current = Date.now();
       }
-      // Only flag Ctrl+C as a violation when it's a select-all+copy combo
-      // (Ctrl+A within 2s then Ctrl+C) — normal in-editor copy is fine
+
       if (e.ctrlKey && e.key === "c") {
-        const isCombo = Date.now() - lastSelectAllRef.current < 2000;
-        if (isCombo) {
-          addViolation("copy_detected", "Candidate used Ctrl+A then Ctrl+C (select-all copy)");
+        const selection = window.getSelection()?.toString() || "";
+        // Only flag if copying substantial content (> 50 chars)
+        if (selection.length > 50) {
+          const isCombo = Date.now() - lastSelectAllRef.current < 2000;
+          addViolation(
+            "copy_detected",
+            isCombo
+              ? `Select-all + copy (${selection.length} chars)`
+              : `Copied ${selection.length} characters`
+          );
         }
+      }
+    }
+
+    function handleContextMenu(e) {
+      // Monaco has its own context menu — don't flag it
+      const isMonaco = e.target.closest(".monaco-editor");
+      if (!isMonaco) {
+        addViolation("right_click", "Candidate used right-click context menu");
       }
     }
 
@@ -143,6 +152,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     document.addEventListener("paste", handlePaste);
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("contextmenu", handleContextMenu);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -151,6 +161,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       document.removeEventListener("fullscreenchange", handleFullscreenChange);
       document.removeEventListener("paste", handlePaste);
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("contextmenu", handleContextMenu);
       scriptObserver.disconnect();
       if (blurTimerRef.current) clearTimeout(blurTimerRef.current);
     };

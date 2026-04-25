@@ -19,13 +19,10 @@ export const POST = withAuthz(async (request, { params }) => {
   return NextResponse.json({ message }, { status: 201 });
 });
 
-export async function GET(request, { params }) {
-  const secret = request.headers.get("x-internal-secret");
-  if (!INTERNAL_SECRET || secret !== INTERNAL_SECRET) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
+export const GET = withAuthz(async (request, { params }) => {
+  if (!isInternal(request)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   const { roomId } = await params;
   const limit = parseInt(new URL(request.url).searchParams.get("limit") || "200", 10);
   const messages = await getMessages(roomId, limit);
   return NextResponse.json({ messages }, { status: 200 });
-}
+});

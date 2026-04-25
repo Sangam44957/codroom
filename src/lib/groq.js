@@ -166,14 +166,42 @@ If no specific problem was given, evaluate the code on its own merit.
 }
 
 function validateEvaluation(evaluation) {
+  const correctness = clamp(evaluation.correctness || 5, 1, 10);
+  const codeQuality = clamp(evaluation.codeQuality || 5, 1, 10);
+  const edgeCaseHandling = clamp(evaluation.edgeCaseHandling || 5, 1, 10);
+  
+  // Calculate overall score based on individual scores if AI provided inconsistent data
+  let overallScore = clamp(evaluation.overallScore ?? 50, 1, 100);
+  
+  // Validate overall score against individual scores
+  const avgIndividualScore = (correctness + codeQuality + edgeCaseHandling) / 3;
+  const expectedOverallScore = Math.round(avgIndividualScore * 10);
+  
+  // If overall score is inconsistent with individual scores, recalculate
+  if (Math.abs(overallScore - expectedOverallScore) > 20) {
+    overallScore = expectedOverallScore;
+  }
+  
+  // Ensure recommendation matches overall score
+  let recommendation = validateRecommendation(evaluation.recommendation);
+  if (overallScore >= 85 && !["STRONG_HIRE", "HIRE"].includes(recommendation)) {
+    recommendation = "STRONG_HIRE";
+  } else if (overallScore >= 70 && !["STRONG_HIRE", "HIRE"].includes(recommendation)) {
+    recommendation = "HIRE";
+  } else if (overallScore >= 55 && recommendation === "NO_HIRE") {
+    recommendation = "BORDERLINE";
+  } else if (overallScore < 55 && !["NO_HIRE", "BORDERLINE"].includes(recommendation)) {
+    recommendation = "NO_HIRE";
+  }
+
   return {
-    correctness: clamp(evaluation.correctness || 5, 1, 10),
-    codeQuality: clamp(evaluation.codeQuality || 5, 1, 10),
+    correctness,
+    codeQuality,
     timeComplexity: evaluation.timeComplexity || "Unknown",
     spaceComplexity: evaluation.spaceComplexity || "Unknown",
-    edgeCaseHandling: clamp(evaluation.edgeCaseHandling || 5, 1, 10),
-    overallScore: clamp(evaluation.overallScore ?? 50, 1, 100),
-    recommendation: validateRecommendation(evaluation.recommendation),
+    edgeCaseHandling,
+    overallScore,
+    recommendation,
     summary: evaluation.summary || "No summary available.",
     improvements: evaluation.improvements || "No specific improvements noted.",
     strengths: evaluation.strengths || "No specific strengths noted.",

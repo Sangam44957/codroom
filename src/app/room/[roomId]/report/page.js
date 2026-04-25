@@ -94,14 +94,17 @@ export default function ReportPage() {
   });
 
   const fetchData = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
-      const roomRes = await fetch(`/api/rooms/${roomId}`);
+      const roomRes = await fetch(`/api/rooms/${roomId}`, { signal: controller.signal });
       const roomData = await roomRes.json();
       if (!roomRes.ok) { setError("Room not found"); return; }
       setRoom(roomData.room);
       const interviewId = roomData.room.interview?.id;
       if (interviewId) {
-        const reportRes = await fetch(`/api/interviews/${interviewId}/report`);
+        const reportRes = await fetch(`/api/interviews/${interviewId}/report`, { signal: controller.signal });
         if (reportRes.ok) {
           const d = await reportRes.json();
           setReport(d.report);
@@ -121,8 +124,17 @@ export default function ReportPage() {
           setPolling(true);
         }
       }
-    } catch { setError("Failed to load report"); }
-    finally { setLoading(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+        setError("Request timed out");
+      } else {
+        setError("Failed to load report");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoading(false); 
+    }
   }, [roomId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -152,8 +164,14 @@ export default function ReportPage() {
     if (!interviewId) return;
     setGenerating(true); setError("");
     const toastId = toast.loading("AI is analyzing the code...");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
     try {
-      const res = await fetch(`/api/interviews/${interviewId}/report`, { method: "POST" });
+      const res = await fetch(`/api/interviews/${interviewId}/report`, { 
+        method: "POST",
+        signal: controller.signal 
+      });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "Failed to generate report", { id: toastId });
@@ -162,10 +180,18 @@ export default function ReportPage() {
       }
       toast.success("Report generated!", { id: toastId });
       setReport(data.report);
-    } catch {
-      toast.error("Something went wrong. Please try again.", { id: toastId });
-      setError("Something went wrong. Please try again.");
-    } finally { setGenerating(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out", { id: toastId });
+        setError("Request timed out");
+      } else {
+        toast.error("Something went wrong. Please try again.", { id: toastId });
+        setError("Something went wrong. Please try again.");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setGenerating(false); 
+    }
   }
 
   async function saveRubric() {

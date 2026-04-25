@@ -110,9 +110,8 @@ export async function requireInterviewOwner(interviewId) {
 }
 
 /**
- * Snapshot write access: the socket server calls the snapshot API using a
- * shared internal secret header. Falls back to room-owner auth for external
- * callers (e.g. tests, admin tools).
+ * Snapshot write access: allows either the room owner (via JWT) OR a candidate
+ * with a valid room-ticket cookie. Also allows internal socket server calls.
  */
 export async function requireSnapshotWriteAccess(request, interviewId) {
   const secret = request.headers.get("x-internal-secret");
@@ -130,9 +129,43 @@ export async function requireSnapshotWriteAccess(request, interviewId) {
     return { internal: true, interview };
   }
 
-  // External call — must be room owner
-  const { user, interview } = await requireInterviewOwner(interviewId);
-  return { internal: false, user, interview };
+  // Get interview with room info
+  const interview = await prisma.interview.findUnique({
+    where: { id: interviewId },
+    include: { room: true },
+  });
+  if (!interview) throw NOT_FOUND("Interview");
+
+  // Try room owner auth first
+  try {
+    const user = await getCurrentUser();
+    if (user && interview.room.createdById === user.userId) {
+      return { user, interview };
+    }
+  } catch {
+    // Fall through to room-ticket check
+  }
+
+  // Check for room-ticket cookie (candidate access)
+  const { cookies } = await import("next/headers");
+  const cookieStore = await cookies();
+  const roomTicketCookie = cookieStore.get(`room-ticket-${interview.room.id}`);
+  
+  if (roomTicketCookie?.value) {
+    try {
+      const { jwtVerify } = await import("jose");
+      const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
+      const { payload } = await jwtVerify(roomTicketCookie.value, SECRET);
+      
+      if (payload.roomId === interview.room.id && payload.type === "room-session") {
+        return { interview };
+      }
+    } catch {
+      // Invalid ticket, fall through to forbidden
+    }
+  }
+
+  throw FORBIDDEN();
 }
 
 // ─── Wrapper for route handlers ──────────────────────────────────────────────

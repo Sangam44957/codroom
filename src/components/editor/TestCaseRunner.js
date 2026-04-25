@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { resolveProblems } from "@/lib/utils";
 
 export default function TestCaseRunner({
   testCases,
@@ -26,11 +27,15 @@ export default function TestCaseRunner({
 
     if (candidatePath) {
       try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const res = await fetch(`/api/rooms/${roomId}/run-tests`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code, language, problemIndex }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         const data = await res.json();
         if (!res.ok) {
           setResults([{ testCase: 1, passed: false, input: null, actual: data.error || "Server error", error: true }]);
@@ -60,11 +65,15 @@ export default function TestCaseRunner({
       const tc = testCases[i];
       try {
         const wrappedCode = wrapCodeWithTest(code, language, tc);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
         const res = await fetch("/api/execute", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code: wrappedCode, language }),
+          signal: controller.signal
         });
+        clearTimeout(timeoutId);
         const data = await res.json();
         if (!res.ok || data.status === "error") {
           newResults.push({ testCase: i + 1, passed: false, input: tc.input, expected: tc.expected, actual: data.output || "Error", error: true });
@@ -159,6 +168,11 @@ export default function TestCaseRunner({
             "🧪 Run Tests"
           )}
         </button>
+        {!["javascript", "typescript", "python"].includes(language) && (
+          <span className="text-xs text-amber-400">
+            ⚠ Automated test comparison only available for JS/TS/Python
+          </span>
+        )}
       </div>
 
       {/* Content */}
@@ -329,16 +343,12 @@ function deepEqual(a, b) {
   if (typeof a !== typeof b) return false;
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
-    // Try direct order first
-    if (a.every((v, i) => deepEqual(v, b[i]))) return true;
-    // For problems like Two Sum where [1,0] == [0,1] — try sorted
-    const sa = [...a].sort((x, y) => JSON.stringify(x) > JSON.stringify(y) ? 1 : -1);
-    const sb = [...b].sort((x, y) => JSON.stringify(x) > JSON.stringify(y) ? 1 : -1);
-    return sa.every((v, i) => deepEqual(v, sb[i]));
+    return a.every((v, i) => deepEqual(v, b[i]));
   }
-  if (typeof a === "object" && a && b) {
-    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
-    return ka.join() === kb.join() && ka.every(k => deepEqual(a[k], b[k]));
+  if (typeof a === "object" && a !== null && b !== null) {
+    const ka = Object.keys(a).sort();
+    const kb = Object.keys(b).sort();
+    return ka.join() === kb.join() && ka.every((k) => deepEqual(a[k], b[k]));
   }
   return false;
 }
@@ -386,6 +396,8 @@ function wrapCodeWithTest(code, language, testCase) {
     return code;
   }
 
+  // Unsupported language — return code with a clear message
+  console.warn(`[TestCaseRunner] Test wrapping not supported for ${language}`);
   return code;
 }
 

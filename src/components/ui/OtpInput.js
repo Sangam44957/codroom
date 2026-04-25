@@ -21,7 +21,10 @@ export default function OtpInput({ value, onChange, disabled }) {
 
   function handlePaste(e) {
     const pasted = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
-    if (pasted.length === 6) { onChange(pasted); inputs.current[5]?.focus(); }
+    if (pasted.length === 6) {
+      onChange(pasted);
+      inputs.current[5]?.focus();
+    }
     e.preventDefault();
   }
 

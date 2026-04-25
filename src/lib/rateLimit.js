@@ -17,12 +17,13 @@ let upstashClient = null;
 let redisClient = null;
 let redisConnecting = false;
 
-function getUpstash() {
+async function getUpstash() {
   if (upstashClient) return upstashClient;
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
   if (!url || !token) return null;
-  const { Redis } = require("@upstash/redis");
+
+  const { Redis } = await import("@upstash/redis");
   upstashClient = new Redis({ url, token });
   return upstashClient;
 }
@@ -72,7 +73,7 @@ export async function rateLimit(prefix, id, { limit, windowMs }) {
   const windowSec = Math.ceil(windowMs / 1000);
 
   // 1. Upstash
-  const upstash = getUpstash();
+  const upstash = await getUpstash();
   if (upstash) {
     const count = await upstash.incr(key);
     if (count === 1) await upstash.expire(key, windowSec);

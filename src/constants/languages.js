@@ -1,94 +1,26 @@
-/**
- * Single source of truth for all language configuration.
- * Used by: Monaco editor, Docker sandbox, room creation UI, run-tests API.
- */
-
-export const LANGUAGES = {
-  javascript: {
-    id:            "javascript",
-    label:         "JavaScript",
-    monacoId:      "javascript",
-    ext:           "js",
-    dockerImage:   "node:20-alpine",
-    dockerCmd:     (f) => `node /sandbox/${f}`,
-    starterTemplate: "function solution(input) {\n  // your code here\n}\n",
-  },
-  typescript: {
-    id:            "typescript",
-    label:         "TypeScript",
-    monacoId:      "typescript",
-    ext:           "ts",
-    dockerImage:   "codroom-ts",
-    dockerCmd:     (f) => `tsx /sandbox/${f}`,
-    starterTemplate: "function solution(input: unknown): unknown {\n  // your code here\n}\n",
-  },
-  python: {
-    id:            "python",
-    label:         "Python",
-    monacoId:      "python",
-    ext:           "py",
-    dockerImage:   "python:3.12-alpine",
-    dockerCmd:     (f) => `python /sandbox/${f}`,
-    starterTemplate: "def solution(input):\n    # your code here\n    pass\n",
-  },
-  java: {
-    id:            "java",
-    label:         "Java",
-    monacoId:      "java",
-    ext:           "java",
-    dockerImage:   "openjdk:21-slim",
-    dockerCmd:     (f) => `sh -c "javac -d /tmp /sandbox/${f} && java -cp /tmp Main"`,
-    starterTemplate: "class Main {\n    public static void main(String[] args) {\n        // your code here\n    }\n}\n",
-  },
-  cpp: {
-    id:            "cpp",
-    label:         "C++",
-    monacoId:      "cpp",
-    ext:           "cpp",
-    dockerImage:   "gcc:13",
-    dockerCmd:     (f) => `sh -c "g++ -o /tmp/out /sandbox/${f} && /tmp/out"`,
-    starterTemplate: "#include <iostream>\nusing namespace std;\n\nint main() {\n    // your code here\n    return 0;\n}\n",
-  },
-  c: {
-    id:            "c",
-    label:         "C",
-    monacoId:      "c",
-    ext:           "c",
-    dockerImage:   "gcc:13",
-    dockerCmd:     (f) => `sh -c "gcc -o /tmp/out /sandbox/${f} && /tmp/out"`,
-    starterTemplate: "#include <stdio.h>\n\nint main() {\n    // your code here\n    return 0;\n}\n",
-  },
-  go: {
-    id:            "go",
-    label:         "Go",
-    monacoId:      "go",
-    ext:           "go",
-    dockerImage:   "golang:1.22-alpine",
-    dockerCmd:     (f) => `go run /sandbox/${f}`,
-    starterTemplate: "package main\n\nfunc main() {\n\t// your code here\n}\n",
-  },
-  rust: {
-    id:            "rust",
-    label:         "Rust",
-    monacoId:      "rust",
-    ext:           "rs",
-    dockerImage:   "rust:1.77-alpine",
-    dockerCmd:     (f) => `sh -c "rustc -o /tmp/out /sandbox/${f} && /tmp/out"`,
-    starterTemplate: "fn main() {\n    // your code here\n}\n",
-  },
+export const LANGUAGE_CONFIG = {
+  javascript: { label: "JavaScript", ext: "js",   defaultCode: `// Welcome to CodRoom\n\nfunction solution() {\n  \n}\n` },
+  typescript: { label: "TypeScript", ext: "ts",   defaultCode: `// Welcome to CodRoom\n\nfunction solution(): void {\n  \n}\n` },
+  python:     { label: "Python",     ext: "py",   defaultCode: `# Welcome to CodRoom\n\ndef solution():\n    pass\n` },
+  java:       { label: "Java",       ext: "java", defaultCode: `// Welcome to CodRoom\n\npublic class Solution {\n    public static void main(String[] args) {\n        \n    }\n}\n` },
+  cpp:        { label: "C++",        ext: "cpp",  defaultCode: `// Welcome to CodRoom\n\n#include <iostream>\nusing namespace std;\n\nint main() {\n    \n    return 0;\n}\n` },
+  csharp:     { label: "C#",         ext: "cs",   defaultCode: `// Welcome to CodRoom\n\nusing System;\n\nclass Solution {\n    static void Main() {\n        \n    }\n}\n` },
+  go:         { label: "Go",         ext: "go",   defaultCode: `// Welcome to CodRoom\n\npackage main\n\nimport "fmt"\n\nfunc main() {\n    fmt.Println("Hello")\n}\n` },
+  rust:       { label: "Rust",       ext: "rs",   defaultCode: `// Welcome to CodRoom\n\nfn main() {\n    \n}\n` },
 };
 
-/** Ordered list for UI dropdowns */
-export const LANGUAGE_LIST = [
-  LANGUAGES.javascript,
-  LANGUAGES.typescript,
-  LANGUAGES.python,
-  LANGUAGES.java,
-  LANGUAGES.cpp,
-  LANGUAGES.c,
-  LANGUAGES.go,
-  LANGUAGES.rust,
-];
+export const LANGUAGES = Object.entries(LANGUAGE_CONFIG).map(([value, { label }]) => ({
+  value,
+  label,
+}));
 
-/** IDs accepted by the execute and run-tests APIs */
-export const SUPPORTED_LANGUAGE_IDS = LANGUAGE_LIST.map((l) => l.id);
+export const LANGUAGE_LIST = LANGUAGES.map(({ value, label }) => ({
+  id: value,
+  label,
+}));
+
+export const LANG_COLORS = {
+  javascript: "#f7df1e", typescript: "#3178c6", python: "#3572A5",
+  java: "#b07219", cpp: "#f34b7d", csharp: "#178600",
+  go: "#00ADD8", rust: "#dea584",
+};

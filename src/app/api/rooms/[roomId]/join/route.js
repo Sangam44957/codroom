@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { validateJoinToken } from "@/services/room.service";
+import { sanitizeName } from "@/lib/sanitize";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 const TICKET_TTL_SECONDS = 14400;
@@ -15,7 +16,7 @@ export async function POST(request, { params }) {
   const room = await validateJoinToken(roomId, joinToken);
   if (!room) return NextResponse.json({ error: "Invalid invite link" }, { status: 403 });
 
-  const resolvedName = room.candidateName?.trim() || candidateName?.trim() || null;
+  const resolvedName = sanitizeName(room.candidateName || candidateName) || null;
 
   const ticket = await new SignJWT({ roomId, type: "room-session", candidateName: resolvedName })
     .setProtectedHeader({ alg: "HS256" })

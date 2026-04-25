@@ -8,6 +8,8 @@
  *   if (csrf) return csrf;
  */
 
+import { NextResponse } from "next/server";
+
 export function checkCsrf(request) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
   const allowedOrigin = new URL(appUrl).origin;
@@ -17,8 +19,9 @@ export function checkCsrf(request) {
 
   const source = origin || (referer ? new URL(referer).origin : null);
 
-  if (!source || source !== allowedOrigin) {
-    const { NextResponse } = require("next/server");
+  // Same-origin requests from browsers don't always send Origin header.
+  // Only reject when we have a source that doesn't match.
+  if (source && source !== allowedOrigin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

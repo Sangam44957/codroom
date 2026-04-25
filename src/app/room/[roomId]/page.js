@@ -101,15 +101,8 @@ export default function RoomPage() {
     // Violations go to security panel only — no chat spam
     null,
     (count) => {
-      // Only the lock event notifies via chat
-      sendMessage(`🔒 Session auto-locked after ${count} security violations.`);
-      if (interviewId) {
-        fetch(`/api/interviews/${interviewId}/end`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ finalCode: files[activeFile] ?? "", language }),
-        }).catch(() => {});
-      }
+      // Only notify about lock, don't auto-end interview
+      sendMessage(`🔒 Session locked after ${count} security violations. Interviewer can unlock or end interview.`);
     }
   );
 
@@ -127,6 +120,151 @@ export default function RoomPage() {
     onFocusModeChanged, onWhiteboardDraw, onWhiteboardClear, onRemoteCameraToggle,
     onRemoteMicToggle, onCandidateUnlocked, onRemoteCursor,
   } = useSocket(session.joined ? roomId : null, session.userName, session.role);
+
+  // Define all callbacks at the top level to avoid conditional hook calls
+  const handleEscapeKey = useCallback((e) => {
+    if (e.key === "Escape") {
+      setEditorFullscreen(false);
+      setBoardFullscreen(false);
+    }
+  }, []);
+
+  const handleCursorChange = useCallback(
+    (line, column) => emitCursorMove({ line, column }),
+    [emitCursorMove],
+  );
+
+  const handleFileChange = useCallback(
+    (filename, content) => {
+      setFiles((prev) => {
+        const next = { ...prev, [filename]: content };
+        if (filename === activeFile) emitCodeChange(content);
+        return next;
+      });
+    },
+    [activeFile, emitCodeChange],
+  );
+
+  const handleFilesChange = useCallback((newFiles, newActive) => {
+    setFiles(newFiles);
+    setActiveFile(newActive);
+  }, []);
+
+  const handleLanguageChange = useCallback(
+    (l) => {
+      setLanguage(l);
+      // Reset to a single template file for the new language
+      const newFiles = buildInitialFiles(l);
+      setFiles(newFiles);
+      setActiveFile(Object.keys(newFiles)[0]);
+      emitLanguageChange(l);
+    }, [emitLanguageChange],
+  );
+
+  const handleRunCode = useCallback(async function() {
+    const activeCode = files[activeFile] ?? "";
+    if (isRunning || !activeCode.trim()) {
+      if (!activeCode.trim()) setOutput({ status: "error", output: "No code to run", type: "Error" });
+      return;
+    }
+    setIsRunning(true); setOutput(null); setShowOutput(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    try {
+      const res = await fetch("/api/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: activeCode, language }),
+        signal: controller.signal,
+      });
+      const data = await res.json();
+      const result = res.ok ? data : { status: "error", output: data.error || "Execution failed", type: "Error" };
+      setOutput(result);
+      emitCodeOutput(result);
+      if (result.status === "error") toast.error("Execution failed");
+      else toast.success("Code executed successfully");
+      emitTimelineEvent({ type: result.status === "error" ? "run_fail" : "run_pass", label: result.status === "error" ? "Run Failed" : "Run Passed" });
+    } catch (err) {
+      const isTimeout = err.name === "AbortError";
+      const result = { status: "error", output: isTimeout ? "Request timed out (15s)." : "Failed to connect to execution server", type: isTimeout ? "Timeout" : "Error" };
+      setOutput(result); emitCodeOutput(result);
+    } finally { clearTimeout(timeoutId); setIsRunning(false); }
+  }, [files, activeFile, isRunning, language, emitCodeOutput, emitTimelineEvent]);
+
+  const fetchRoom = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    
+    try {
+      const rawToken = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("joinToken") : null;
+
+      if (rawToken) {
+        const exchangeRes = await fetch(`/api/rooms/${roomId}/join`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ joinToken: rawToken }),
+          signal: controller.signal,
+        });
+        if (!exchangeRes.ok) {
+          const d = await exchangeRes.json().catch(() => ({}));
+          setError(d.error || "Invalid invite link");
+          setLoading(false);
+          return;
+        }
+        const joinData = await exchangeRes.json();
+        // If the room has a pre-set candidate name, lock it in immediately
+        if (joinData.candidateName) {
+          setSession({ userName: joinData.candidateName, role: "candidate", joined: true });
+        }
+        window.history.replaceState({}, "", `/room/${roomId}`);
+      }
+
+      const res = await fetch(`/api/rooms/${roomId}`, { signal: controller.signal });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Room not found"); return; }
+
+      setRoom(data.room);
+      const lang = data.room.language || "javascript";
+      setLanguage(lang);
+
+      // Use problems array if available, fall back to legacy single problem
+      const allProblems = data.room.problems?.length
+        ? data.room.problems.map((rp) => rp.problem)
+        : data.room.problem ? [data.room.problem] : [];
+      const firstProblem = allProblems[0] || null;
+      const initialFiles = buildInitialFiles(lang, firstProblem?.starterCode);
+      setFiles(initialFiles);
+      setActiveFile(Object.keys(initialFiles)[0]);
+      setShowProblem(allProblems.length > 0);
+
+      if (data.room.interview) {
+        setInterviewId(data.room.interview.id);
+        setInterviewStatus(data.room.interview.status);
+      }
+
+      try {
+        const meRes = await fetch("/api/auth/me", { signal: controller.signal });
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          const myId = meData.user?.userId ?? meData.user?.id;
+          if (myId && myId === data.room.createdById) {
+            setSession({ userName: meData.user.name, role: "interviewer", joined: true });
+          }
+        }
+      } catch {}
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+        setError("Request timed out");
+      } else {
+        setError("Failed to load room");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoading(false); 
+    }
+  }, [roomId]);
 
   // When server state is lost (restart), push active file back so the room
   // re-seeds correctly for any new participants joining.
@@ -222,68 +360,6 @@ export default function RoomPage() {
     return () => clearInterval(elapsedRef.current);
   }, [interviewStatus]);
 
-  const fetchRoom = useCallback(async () => {
-    try {
-      const rawToken = typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("joinToken") : null;
-
-      if (rawToken) {
-        const exchangeRes = await fetch(`/api/rooms/${roomId}/join`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ joinToken: rawToken }),
-        });
-        if (!exchangeRes.ok) {
-          const d = await exchangeRes.json().catch(() => ({}));
-          setError(d.error || "Invalid invite link");
-          setLoading(false);
-          return;
-        }
-        const joinData = await exchangeRes.json();
-        // If the room has a pre-set candidate name, lock it in immediately
-        if (joinData.candidateName) {
-          setSession({ userName: joinData.candidateName, role: "candidate", joined: true });
-        }
-        window.history.replaceState({}, "", `/room/${roomId}`);
-      }
-
-      const res = await fetch(`/api/rooms/${roomId}`);
-      const data = await res.json();
-      if (!res.ok) { setError(data.error || "Room not found"); return; }
-
-      setRoom(data.room);
-      const lang = data.room.language || "javascript";
-      setLanguage(lang);
-
-      // Use problems array if available, fall back to legacy single problem
-      const allProblems = data.room.problems?.length
-        ? data.room.problems.map((rp) => rp.problem)
-        : data.room.problem ? [data.room.problem] : [];
-      const firstProblem = allProblems[0] || null;
-      const initialFiles = buildInitialFiles(lang, firstProblem?.starterCode);
-      setFiles(initialFiles);
-      setActiveFile(Object.keys(initialFiles)[0]);
-      setShowProblem(allProblems.length > 0);
-
-      if (data.room.interview) {
-        setInterviewId(data.room.interview.id);
-        setInterviewStatus(data.room.interview.status);
-      }
-
-      try {
-        const meRes = await fetch("/api/auth/me");
-        if (meRes.ok) {
-          const meData = await meRes.json();
-          const myId = meData.user?.userId ?? meData.user?.id;
-          if (myId && myId === data.room.createdById) {
-            setSession({ userName: meData.user.name, role: "interviewer", joined: true });
-          }
-        }
-      } catch {}
-    } catch { setError("Failed to load room"); }
-    finally { setLoading(false); }
-  }, [roomId]);
-
   useEffect(() => { fetchRoom(); }, [fetchRoom]);
 
   function formatCountdown(s) {
@@ -304,11 +380,15 @@ export default function RoomPage() {
   }
 
   async function handleStartInterview() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    
     try {
       const res = await fetch("/api/interviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ roomId, language }),
+        signal: controller.signal,
       });
       const data = await res.json();
       if (res.ok) {
@@ -317,28 +397,48 @@ export default function RoomPage() {
         emitSetInterviewId(data.interview.id);
         toast.success("Interview started!");
       } else toast.error(data.error || "Failed to start interview");
-    } catch (err) { console.error(err); toast.error("Failed to start interview"); }
+    } catch (err) { 
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      } else {
+        console.error(err); 
+        toast.error("Failed to start interview"); 
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function handleEndInterview() {
     if (!confirm("End this interview?")) return;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    
     try {
       const res = await fetch(`/api/interviews/${interviewId}/end`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ finalCode: files[activeFile] ?? "", language }),
+        signal: controller.signal,
       });
       if (res.ok) {
         setInterviewStatus("completed");
-        toast.success("Interview ended. Generating AI report…");
-        // Auto-generate report then redirect
-        const data = await res.json();
-        const iid = data.interview?.id || interviewId;
-        fetch(`/api/interviews/${iid}/report`, { method: "POST" })
-          .then(() => router.push(`/room/${roomId}/report`))
-          .catch(() => router.push(`/room/${roomId}/report`));
-      } else { const d = await res.json(); toast.error(d.error || "Failed to end interview"); }
-    } catch (err) { console.error(err); toast.error("Failed to end interview"); }
+        toast.success("Interview ended successfully");
+        // Don't auto-generate report or redirect - let interviewer choose
+      } else { 
+        const d = await res.json(); 
+        toast.error(d.error || "Failed to end interview"); 
+      }
+    } catch (err) { 
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      } else {
+        console.error(err); 
+        toast.error("Failed to end interview"); 
+      }
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async function handleDeleteInterview() {
@@ -352,68 +452,6 @@ export default function RoomPage() {
       else toast.error("Delete failed.");
     } finally { setDeleting(false); }
   }
-
-  const handleCursorChange = useCallback(
-    (line, column) => emitCursorMove({ line, column }),
-    [emitCursorMove],
-  );
-
-  const handleFileChange = useCallback(
-    (filename, content) => {
-      setFiles((prev) => {
-        const next = { ...prev, [filename]: content };
-        if (filename === activeFile) emitCodeChange(content);
-        return next;
-      });
-    },
-    [activeFile, emitCodeChange],
-  );
-
-  const handleFilesChange = useCallback((newFiles, newActive) => {
-    setFiles(newFiles);
-    setActiveFile(newActive);
-  }, []);
-
-  const handleLanguageChange = useCallback(
-    (l) => {
-      setLanguage(l);
-      // Reset to a single template file for the new language
-      const newFiles = buildInitialFiles(l);
-      setFiles(newFiles);
-      setActiveFile(Object.keys(newFiles)[0]);
-      emitLanguageChange(l);
-    }, [emitLanguageChange],
-  );
-
-  const handleRunCode = useCallback(async function() {
-    const activeCode = files[activeFile] ?? "";
-    if (isRunning || !activeCode.trim()) {
-      if (!activeCode.trim()) setOutput({ status: "error", output: "No code to run", type: "Error" });
-      return;
-    }
-    setIsRunning(true); setOutput(null); setShowOutput(true);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
-    try {
-      const res = await fetch("/api/execute", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: activeCode, language }),
-        signal: controller.signal,
-      });
-      const data = await res.json();
-      const result = res.ok ? data : { status: "error", output: data.error || "Execution failed", type: "Error" };
-      setOutput(result);
-      emitCodeOutput(result);
-      if (result.status === "error") toast.error("Execution failed");
-      else toast.success("Code executed successfully");
-      emitTimelineEvent({ type: result.status === "error" ? "run_fail" : "run_pass", label: result.status === "error" ? "Run Failed" : "Run Passed" });
-    } catch (err) {
-      const isTimeout = err.name === "AbortError";
-      const result = { status: "error", output: isTimeout ? "Request timed out (15s)." : "Failed to connect to execution server", type: isTimeout ? "Timeout" : "Error" };
-      setOutput(result); emitCodeOutput(result);
-    } finally { clearTimeout(timeoutId); setIsRunning(false); }
-  }, [files, activeFile, isRunning, language, emitCodeOutput, emitTimelineEvent]);
 
   // Keyboard shortcuts
   const { showShortcutModal, setShowShortcutModal } = useRoomShortcuts({
@@ -525,13 +563,6 @@ export default function RoomPage() {
     board: { icon: PenLine,       label: "Board" },
   };
 
-  const handleEscapeKey = useCallback((e) => {
-    if (e.key === "Escape") {
-      setEditorFullscreen(false);
-      setBoardFullscreen(false);
-    }
-  }, []);
-
   return (
     <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200" onKeyDown={handleEscapeKey}>
 
@@ -626,17 +657,21 @@ export default function RoomPage() {
 
           {/* Security violation count + unlock button — interviewer only */}
           {isInterviewer && violations.length > 0 && (
-            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-rose-500/10 text-rose-400 border-rose-500/20">
-              <Shield size={10} />
-              {violations.length}
-              <button
-                onClick={() => { emitUnlockCandidate(); toast.success("Candidate unlocked"); }}
-                className="ml-1 text-[10px] text-emerald-400 hover:text-emerald-300 font-semibold"
-                title="Unlock candidate"
-              >
-                Unlock
-              </button>
-            </span>
+            <div className="flex items-center gap-1">
+              <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border bg-rose-500/10 text-rose-400 border-rose-500/20">
+                <Shield size={10} />
+                {violations.length}
+              </span>
+              {isLocked && (
+                <button
+                  onClick={() => { emitUnlockCandidate(); toast.success("Candidate unlocked"); }}
+                  className="text-xs px-2 py-0.5 rounded-full border bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20 transition-all"
+                  title="Unlock candidate"
+                >
+                  Unlock
+                </button>
+              )}
+            </div>
           )}
 
           {serverStateLost && (
@@ -783,6 +818,24 @@ export default function RoomPage() {
           {isInterviewer && interviewStatus === "in_progress" && (
             <button onClick={handleEndInterview} className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-500 text-white text-xs rounded-md font-semibold transition-all">
               <Square size={11} /> End
+            </button>
+          )}
+          {/* Generate Report button — only show after interview is completed */}
+          {isInterviewer && interviewStatus === "completed" && (
+            <button 
+              onClick={async () => {
+                toast.loading("Generating AI report...");
+                try {
+                  await fetch(`/api/interviews/${interviewId}/report`, { method: "POST" });
+                  toast.success("Report generated!");
+                  router.push(`/room/${roomId}/report`);
+                } catch {
+                  toast.error("Failed to generate report");
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 bg-violet-600 hover:bg-violet-500 text-white text-xs rounded-md font-semibold transition-all"
+            >
+              📊 Report
             </button>
           )}
           {isInterviewer && interviewStatus === "completed" && (

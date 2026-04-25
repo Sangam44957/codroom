@@ -11,6 +11,7 @@ import {
 import { findInterviewByRoomId, createInterview } from "@/repositories/interview.repository";
 import { incrementUsageCount } from "@/repositories/problem.repository";
 import { assertEnum, ROOM_STATUS } from "@/lib/enums";
+import prisma from "@/lib/db";
 
 const PAGE_LIMIT = 12;
 
@@ -39,7 +40,36 @@ export async function getRoomOwnerData(roomId) {
 export async function listRooms(userId, page) {
   const skip = (Math.max(1, page) - 1) * PAGE_LIMIT;
   const [rooms, total] = await findRoomsByUser(userId, { skip, take: PAGE_LIMIT });
-  return { rooms, total, page, totalPages: Math.ceil(total / PAGE_LIMIT) };
+
+  // Compute stats across ALL rooms (not just current page)
+  const stats = await prisma.room.groupBy({
+    by: ["status"],
+    where: { createdById: userId },
+    _count: true,
+  });
+
+  const evaluated = await prisma.room.count({
+    where: {
+      createdById: userId,
+      interview: { report: { isNot: null } },
+    },
+  });
+
+  const statusCounts = Object.fromEntries(stats.map((s) => [s.status, s._count]));
+
+  return {
+    rooms,
+    total,
+    page,
+    totalPages: Math.ceil(total / PAGE_LIMIT),
+    stats: {
+      total,
+      waiting: statusCounts.waiting || 0,
+      active: statusCounts.active || 0,
+      completed: (statusCounts.completed || 0) + (statusCounts.evaluated || 0),
+      evaluated,
+    },
+  };
 }
 
 export async function createNewRoom({ title, candidateName, language, problemId, problemIds, pipelineId }, userId) {

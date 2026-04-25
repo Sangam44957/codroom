@@ -54,7 +54,7 @@ export async function endInterview(interviewId, { finalCode, language }) {
   // Atomic check-and-update: only succeeds if status is still 'in_progress'
   const endedAt = new Date();
   const updated = await prisma.$queryRaw`
-    UPDATE "Interview"
+    UPDATE interviews
     SET
       status     = 'completed',
       "endedAt"  = ${endedAt},

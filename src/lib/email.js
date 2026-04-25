@@ -3,10 +3,10 @@ function getConfig() {
     apiKey:   process.env.BREVO_API_KEY,
     appUrl:   process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     sender: {
-      email: process.env.BREVO_SENDER_EMAIL || "mehtasangam77@gmail.com",
+      email: process.env.BREVO_SENDER_EMAIL,
       name:  process.env.BREVO_SENDER_NAME  || "CodRoom",
     },
-    replyTo: process.env.BREVO_REPLY_TO || process.env.BREVO_SENDER_EMAIL || "mehtasangam77@gmail.com",
+    replyTo: process.env.BREVO_REPLY_TO || process.env.BREVO_SENDER_EMAIL,
   };
 }
 
@@ -18,14 +18,14 @@ async function sendEmail({ to, subject, html }) {
     return { skipped: true };
   }
   if (!sender.email) {
-    console.warn("[email] BREVO_SENDER_EMAIL not set — skipping send");
+    console.error("[email] BREVO_SENDER_EMAIL is required when BREVO_API_KEY is set — skipping send");
     return { skipped: true };
   }
 
   const payload = {
     sender,
     to: [{ email: to }],
-    replyTo: { email: replyTo },
+    replyTo: { email: replyTo || sender.email },
     subject,
     htmlContent: html,
   };

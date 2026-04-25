@@ -184,6 +184,9 @@ export default function ProblemsPage() {
 
   const fetchProblems = useCallback(async () => {
     setLoading(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
       const params = new URLSearchParams();
       if (difficulty !== "all") params.set("difficulty", difficulty);
@@ -191,14 +194,21 @@ export default function ProblemsPage() {
       if (company !== "all") params.set("company", company);
       if (search) params.set("search", search);
       params.set("page", String(page));
-      const res = await fetch(`/api/problems?${params}`);
+      const res = await fetch(`/api/problems?${params}`, { signal: controller.signal });
       const data = await res.json();
       if (res.ok) {
         setProblems(data.problems);
         setTotal(data.total);
         setTotalPages(data.totalPages);
       }
-    } finally { setLoading(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoading(false); 
+    }
   }, [difficulty, topic, company, search, page]);
 
   useEffect(() => { fetchProblems(); }, [fetchProblems]);

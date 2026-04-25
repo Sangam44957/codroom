@@ -7,6 +7,7 @@ const path = require("path");
 const Sentry = require("@sentry/node");
 const { RoomStateManager } = require("./roomStateManager.cjs");
 const { logger, createSocketLogger } = require("./logger.cjs");
+const { sanitizeName, sanitizeText } = require("./utils.js");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
@@ -43,15 +44,39 @@ const redisOptions = {
   url: process.env.REDIS_URL,
   socket: {
     connectTimeout: 10000,   // 10s — gives cloud Redis time to accept
-    reconnectStrategy: (retries) => Math.min(retries * 500, 5000),
+    lazyConnect: true,       // Don't auto-connect, we'll handle it manually
+    reconnectStrategy: (retries) => {
+      const delay = Math.min(retries * 500, 5000);
+      logger.warn({ retries, delay }, "[redis] reconnecting");
+      return delay;
+    },
   },
 };
 
 const pubClient = createClient(redisOptions);
 const subClient = pubClient.duplicate();
 
-pubClient.on("error", (err) => logger.error({ err }, "[redis] pub error"));
-subClient.on("error", (err) => logger.error({ err }, "[redis] sub error"));
+// Enhanced error handling with reconnection logic
+pubClient.on("error", (err) => {
+  logger.error({ err: { message: err.message, code: err.code } }, "[redis] pub error");
+  if (err.code === "ENETUNREACH" || err.code === "ECONNREFUSED") {
+    logger.warn("[redis] network unreachable, will retry connection");
+  }
+});
+
+subClient.on("error", (err) => {
+  logger.error({ err: { message: err.message, code: err.code } }, "[redis] sub error");
+  if (err.code === "ENETUNREACH" || err.code === "ECONNREFUSED") {
+    logger.warn("[redis] network unreachable, will retry connection");
+  }
+});
+
+pubClient.on("connect", () => logger.info("[redis] pub client connected"));
+subClient.on("connect", () => logger.info("[redis] sub client connected"));
+pubClient.on("ready", () => logger.info("[redis] pub client ready"));
+subClient.on("ready", () => logger.info("[redis] sub client ready"));
+pubClient.on("reconnecting", () => logger.info("[redis] pub client reconnecting"));
+subClient.on("reconnecting", () => logger.info("[redis] sub client reconnecting"));
 
 const httpServer = createServer((req, res) => {
   if (req.method === "GET" && req.url === "/health") {
@@ -211,6 +236,24 @@ async function getRoomOwnerIdFromDB(roomId) {
 }
 
 // ─── Connection handler ───────────────────────────────────────────────────────
+/**
+ * SECURITY MODEL:
+ * 
+ * 1. Authentication: All sockets go through JWT auth middleware. Authenticated users
+ *    get socket.data.user populated. Unauthenticated users can still join with room tickets.
+ * 
+ * 2. Room Authorization: Users must join a room before performing any room actions.
+ *    - Room owners: Verified via JWT userId matching room.createdById
+ *    - Candidates: Verified via room-ticket JWT containing roomId + type="room-session"
+ * 
+ * 3. Event Authorization: Every event handler verifies:
+ *    - socket.data.roomId matches the roomId in the event payload (prevents cross-room attacks)
+ *    - Role-based permissions (interviewer-only events check socket.data.role === "interviewer")
+ * 
+ * 4. Input Sanitization: All user inputs (names, messages) are sanitized to prevent XSS
+ * 
+ * 5. Rate Limiting: Per-socket token bucket rate limiting prevents abuse
+ */
 io.on("connection", (socket) => {
   const slog = createSocketLogger(socket);
   slog.debug({ auth: socket.data.isAuthenticated }, "socket connected");
@@ -218,6 +261,10 @@ io.on("connection", (socket) => {
   socket.on("join-room", async ({ roomId, userName, role: clientRole }) => {
     if (!roomId || !userName) return;
     if (!await isAllowed(socket.id, "join-room")) return;
+
+    // Sanitize user input
+    userName = sanitizeName(userName);
+    if (!userName) return;
 
     let authoritativeRole = "candidate";
 
@@ -252,7 +299,7 @@ io.on("connection", (socket) => {
       try {
         const { payload } = await jwtVerify(ticket, SECRET);
         if (payload.roomId !== roomId || payload.type !== "room-session") throw new Error("Invalid payload type or roomId mismatch");
-        if (payload.candidateName) userName = payload.candidateName;
+        if (payload.candidateName) userName = sanitizeName(payload.candidateName);
       } catch(err) {
         console.error("Invalid room ticket for unauthenticated user:", err.message);
         socket.emit("join-error", { message: "Invalid room ticket" });
@@ -538,7 +585,7 @@ io.on("connection", (socket) => {
       id: `${Date.now()}-${socket.id}`,
       sender: socket.data.userName || "Anonymous",
       role: socket.data.role || "candidate",
-      text: text.trim().slice(0, 2000),
+      text: sanitizeText(text.trim(), 2000),
       timestamp: new Date().toISOString(),
     };
 
@@ -598,11 +645,29 @@ io.on("connection", (socket) => {
 const PORT = parseInt(process.env.SOCKET_PORT || "3001", 10);
 
 async function start() {
-  await Promise.all([pubClient.connect(), subClient.connect()]);
-  io.adapter(createAdapter(pubClient, subClient));
-  roomState = new RoomStateManager(pubClient);
-  initRateLimiter(pubClient);
-  logger.info("Redis connected");
+  try {
+    logger.info("Connecting to Redis...");
+    await Promise.all([
+      pubClient.connect().catch(err => {
+        logger.error({ err: { message: err.message, code: err.code } }, "[redis] pub client connection failed");
+        throw err;
+      }),
+      subClient.connect().catch(err => {
+        logger.error({ err: { message: err.message, code: err.code } }, "[redis] sub client connection failed");
+        throw err;
+      })
+    ]);
+    
+    io.adapter(createAdapter(pubClient, subClient));
+    roomState = new RoomStateManager(pubClient);
+    initRateLimiter(pubClient);
+    logger.info("Redis connected successfully");
+  } catch (err) {
+    logger.error({ err: { message: err.message, code: err.code } }, "Redis connection failed, continuing without Redis adapter");
+    // Continue without Redis adapter - Socket.IO will work in single-instance mode
+    roomState = new RoomStateManager(null); // Pass null for Redis client
+    initRateLimiter(null);
+  }
 
   httpServer.on("error", (err) => {
     if (err.code === "EADDRINUSE") {
@@ -631,6 +696,15 @@ async function shutdown(signal) {
     clearTimeout(timer);
     snapshotTimers.delete(key);
   }
+  
+  // Gracefully close Redis connections
+  try {
+    if (pubClient.isReady) await pubClient.quit();
+    if (subClient.isReady) await subClient.quit();
+  } catch (err) {
+    logger.warn({ err }, "Error closing Redis connections");
+  }
+  
   await prisma.$disconnect();
   logger.info("shutdown complete");
   process.exit(0);

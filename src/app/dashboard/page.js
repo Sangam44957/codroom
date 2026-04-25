@@ -96,38 +96,69 @@ export default function DashboardPage() {
   }, []);
 
   const fetchData = useCallback(async (p = 1) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
-      const userRes = await fetch("/api/auth/me");
+      const userRes = await fetch("/api/auth/me", { signal: controller.signal });
       if (!userRes.ok) { router.push("/login"); return; }
       const userData = await userRes.json();
       setUser(userData.user);
-      const roomsRes = await fetch(`/api/rooms?page=${p}`);
+      const roomsRes = await fetch(`/api/rooms?page=${p}`, { signal: controller.signal });
       if (roomsRes.ok) {
         const d = await roomsRes.json();
         setRooms(d.rooms);
         setTotal(d.total ?? d.rooms.length);
         setTotalPages(d.totalPages ?? 1);
       }
-    } catch { router.push("/login"); }
-    finally { setLoading(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      } else {
+        router.push("/login");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoading(false); 
+    }
   }, [router]);
 
   const fetchTemplates = useCallback(async () => {
     setLoadingTemplates(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
-      const res = await fetch("/api/templates");
+      const res = await fetch("/api/templates", { signal: controller.signal });
       const data = await res.json();
       if (res.ok) setTemplates(data.templates);
-    } finally { setLoadingTemplates(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoadingTemplates(false); 
+    }
   }, []);
 
   const fetchPipelines = useCallback(async () => {
     setLoadingPipelines(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
-      const res = await fetch("/api/pipelines");
+      const res = await fetch("/api/pipelines", { signal: controller.signal });
       const data = await res.json();
       if (res.ok) setPipelines(data.pipelines);
-    } finally { setLoadingPipelines(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoadingPipelines(false); 
+    }
   }, []);
 
   // Keep roomsRef in sync and request counts whenever rooms load

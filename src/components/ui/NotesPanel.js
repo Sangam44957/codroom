@@ -10,9 +10,12 @@ export default function NotesPanel({ roomId }) {
 
   // Load the single persisted note on mount
   useEffect(() => {
+    const controller = new AbortController();
     async function loadNotes() {
       try {
-        const res = await fetch(`/api/rooms/${roomId}/notes`);
+        const res = await fetch(`/api/rooms/${roomId}/notes`, {
+          signal: controller.signal
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.note?.content) setNotes(data.note.content);
@@ -21,20 +24,25 @@ export default function NotesPanel({ roomId }) {
       initialLoadRef.current = false;
     }
     loadNotes();
+    return () => controller.abort();
   }, [roomId]);
 
   const saveNotes = useCallback(async () => {
     setSaving(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     try {
       await fetch(`/api/rooms/${roomId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: notes }),
+        signal: controller.signal
       });
       setLastSaved(new Date());
     } catch (error) {
       console.error("Failed to save notes:", error);
     } finally {
+      clearTimeout(timeoutId);
       setSaving(false);
     }
   }, [roomId, notes]);
@@ -54,21 +62,21 @@ export default function NotesPanel({ roomId }) {
   }
 
   return (
-    <div className="flex flex-col h-full bg-gray-900">
+    <div className="flex flex-col h-full bg-[#0d0d18]">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-800">
+      <div className="px-4 py-3 border-b border-white/[0.06]">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-semibold text-white">📝 Notes</h3>
-          {saving && <span className="text-yellow-400 text-xs">Saving...</span>}
+          {saving && <span className="text-amber-400 text-xs">Saving...</span>}
           {lastSaved && !saving && (
-            <span className="text-gray-500 text-xs">Saved {formatTime(lastSaved)}</span>
+            <span className="text-slate-500 text-xs">Saved {formatTime(lastSaved)}</span>
           )}
         </div>
       </div>
 
       {/* Info Banner */}
-      <div className="px-4 py-2 bg-purple-900/20 border-b border-gray-800">
-        <p className="text-purple-400 text-xs">🔒 Private - Only you can see these notes</p>
+      <div className="px-4 py-2 bg-violet-500/10 border-b border-white/[0.06]">
+        <p className="text-violet-400 text-xs">🔒 Private — Only you can see these notes</p>
       </div>
 
       {/* Text Area */}
@@ -77,7 +85,7 @@ export default function NotesPanel({ roomId }) {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           placeholder="Write your observations...\n\n• Problem-solving approach\n• Communication skills\n• Code quality\n• Areas for improvement"
-          className="w-full h-full bg-gray-800 border border-gray-700 rounded-lg text-white text-sm p-3 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+          className="w-full h-full bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.12] rounded-xl text-white text-sm p-3 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-violet-500/30 resize-none"
         />
       </div>
     </div>

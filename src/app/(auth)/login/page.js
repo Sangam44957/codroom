@@ -5,8 +5,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Mail, Lock, ArrowRight } from "lucide-react";
-import Input from "@/components/ui/Input";
-import Button from "@/components/ui/Button";
 
 const RAIN_CHARS = "アイウエオカキクケコサシスセソタチツテトナニヌネノ01{}[]<>/\\|=+-*&^%$#@!";
 

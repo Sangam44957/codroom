@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
 import Editor from "@monaco-editor/react";
 import {
   SkipBack, SkipForward, Play, Pause, ChevronLeft,
@@ -66,9 +67,12 @@ export default function PlaybackPage() {
   const eventListRef = useRef(null);
 
   const fetchData = useCallback(async () => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
     try {
       // Step 1: get room to find interviewId
-      const roomRes  = await fetch(`/api/rooms/${roomId}`);
+      const roomRes  = await fetch(`/api/rooms/${roomId}`, { signal: controller.signal });
       const roomData = await roomRes.json();
       if (!roomRes.ok) {
         setError(roomRes.status === 403
@@ -80,7 +84,7 @@ export default function PlaybackPage() {
 
       // Step 2: single playback endpoint
       const interviewId = roomData.room.interview.id;
-      const pbRes  = await fetch(`/api/interviews/${interviewId}/playback`);
+      const pbRes  = await fetch(`/api/interviews/${interviewId}/playback`, { signal: controller.signal });
       const pbData = await pbRes.json();
       if (!pbRes.ok) { setError(pbData.error || "Failed to load playback data."); return; }
       if (!pbData.timeline?.filter((t) => t.type === "code").length) {
@@ -89,8 +93,17 @@ export default function PlaybackPage() {
       }
 
       setData({ ...pbData, roomTitle: roomData.room.title });
-    } catch { setError("Failed to load playback data."); }
-    finally  { setLoading(false); }
+    } catch (err) {
+      if (err.name === "AbortError") {
+        toast.error("Request timed out");
+        setError("Request timed out");
+      } else {
+        setError("Failed to load playback data.");
+      }
+    } finally { 
+      clearTimeout(timeoutId);
+      setLoading(false); 
+    }
   }, [roomId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);

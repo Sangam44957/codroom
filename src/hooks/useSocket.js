@@ -11,12 +11,17 @@ export default function useSocket(roomId, userName, role) {
   const socketRef = useRef(null);
   const hasConnectedOnceRef = useRef(false);
   const reconnectDetectedRef = useRef(false);
+  const userNameRef = useRef(userName);
+  const roleRef = useRef(role);
   const [isConnected, setIsConnected] = useState(false);
   const [isJoined, setIsJoined] = useState(false);
   const [users, setUsers] = useState([]);
   const [messages, setMessages] = useState([]);
   const [serverStateLost, setServerStateLost] = useState(false);
   const [timelineEvents, setTimelineEvents] = useState([]);
+
+  useEffect(() => { userNameRef.current = userName; }, [userName]);
+  useEffect(() => { roleRef.current = role; }, [role]);
 
   // Stable handler refs — updated every render, never cause re-subscriptions
   const handlersRef = useRef({
@@ -36,7 +41,7 @@ export default function useSocket(roomId, userName, role) {
   });
 
   useEffect(() => {
-    if (!roomId || !userName) return;
+    if (!roomId || !userNameRef.current) return;
 
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
     const ticketCookie = document.cookie
@@ -65,7 +70,12 @@ export default function useSocket(roomId, userName, role) {
       }
       hasConnectedOnceRef.current = true;
       setIsConnected(true);
-      socket.emit("join-room", { roomId, userName, role });
+      // Use refs so socket doesn't tear down when userName/role change
+      socket.emit("join-room", {
+        roomId,
+        userName: userNameRef.current,
+        role: roleRef.current,
+      });
     });
 
     socket.on("disconnect", (reason) => {
@@ -223,7 +233,7 @@ export default function useSocket(roomId, userName, role) {
       hasConnectedOnceRef.current = false;
       reconnectDetectedRef.current = false;
     };
-  }, [roomId, userName, role]);
+  }, [roomId]); // Only roomId triggers reconnect
 
   // ─── Emit helpers ────────────────────────────────────────────
 

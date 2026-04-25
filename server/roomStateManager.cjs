@@ -82,127 +82,358 @@ class RoomStateManager {
   constructor(redisClient) {
     this.redis = redisClient;
     this.localCache = new Map();
+    this.fallbackMode = !redisClient;
+    
+    if (this.fallbackMode) {
+      console.warn("[RoomStateManager] Running in fallback mode without Redis");
+      this.memoryRooms = new Map(); // In-memory room storage
+    }
   }
 
   async getRoomState(roomId) {
+    if (this.fallbackMode) {
+      return this.memoryRooms.get(roomId) || null;
+    }
+    
+    if (!this.redis?.isReady) {
+      console.warn("[RoomStateManager] Redis not ready, using cache only");
+      const cached = this.localCache.get(roomId);
+      return cached?.data || null;
+    }
+
     const cached = this.localCache.get(roomId);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
-    const state = await this.redis.hGetAll(`room:${roomId}`);
-    if (!state || Object.keys(state).length === 0) return null;
+    try {
+      const state = await this.redis.hGetAll(`room:${roomId}`);
+      if (!state || Object.keys(state).length === 0) return null;
 
-    const parsed = {
-      code:        state.code || "",
-      language:    state.language || "javascript",
-      users:       JSON.parse(state.users    || "[]"),
-      messages:    JSON.parse(state.messages || "[]"),
-      events:      JSON.parse(state.events   || "[]"),
-      interviewId: state.interviewId || null,
-      focusMode:   state.focusMode === "true",
-      timerEndsAt: state.timerEndsAt || null,
-    };
+      const parsed = {
+        code:        state.code || "",
+        language:    state.language || "javascript",
+        users:       JSON.parse(state.users    || "[]"),
+        messages:    JSON.parse(state.messages || "[]"),
+        events:      JSON.parse(state.events   || "[]"),
+        interviewId: state.interviewId || null,
+        focusMode:   state.focusMode === "true",
+        timerEndsAt: state.timerEndsAt || null,
+      };
 
-    this.localCache.set(roomId, { data: parsed, timestamp: Date.now() });
-    return parsed;
+      this.localCache.set(roomId, { data: parsed, timestamp: Date.now() });
+      return parsed;
+    } catch (err) {
+      console.error(`[RoomStateManager] Error getting room state: ${err.message}`);
+      const cached = this.localCache.get(roomId);
+      return cached?.data || null;
+    }
   }
 
   // Returns true if this call created the room, false if it already existed.
   async initRoom(roomId, data) {
-    const created = await this.redis.eval(INIT_ROOM_SCRIPT, {
-      keys: [`room:${roomId}`],
-      arguments: [
-        data.code        || "",
-        data.language    || "javascript",
-        JSON.stringify(data.users     || []),
-        JSON.stringify(data.messages  || []),
-        JSON.stringify(data.events    || []),
-        data.interviewId || "",
-        String(ROOM_TTL_S),
-      ],
-    });
-    this._invalidate(roomId);
-    return created === 1;
+    if (this.fallbackMode) {
+      if (this.memoryRooms.has(roomId)) return false;
+      this.memoryRooms.set(roomId, {
+        code:        data.code        || "",
+        language:    data.language    || "javascript",
+        users:       data.users       || [],
+        messages:    data.messages    || [],
+        events:      data.events      || [],
+        interviewId: data.interviewId || null,
+        focusMode:   false,
+        timerEndsAt: null,
+      });
+      return true;
+    }
+    
+    if (!this.redis?.isReady) {
+      console.warn("[RoomStateManager] Redis not ready for initRoom");
+      return false;
+    }
+
+    try {
+      const created = await this.redis.eval(INIT_ROOM_SCRIPT, {
+        keys: [`room:${roomId}`],
+        arguments: [
+          data.code        || "",
+          data.language    || "javascript",
+          JSON.stringify(data.users     || []),
+          JSON.stringify(data.messages  || []),
+          JSON.stringify(data.events    || []),
+          data.interviewId || "",
+          String(ROOM_TTL_S),
+        ],
+      });
+      this._invalidate(roomId);
+      return created === 1;
+    } catch (err) {
+      console.error(`[RoomStateManager] Error initializing room: ${err.message}`);
+      return false;
+    }
   }
 
   async updateCode(roomId, code) {
-    await this.redis.hSet(`room:${roomId}`, "code", code);
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.code = code;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "code", code);
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error updating code: ${err.message}`);
+    }
   }
 
   async updateLanguage(roomId, language) {
-    await this.redis.hSet(`room:${roomId}`, "language", language);
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.language = language;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "language", language);
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error updating language: ${err.message}`);
+    }
   }
 
   // Atomically upsert a user (match by name+role, update socketId) or append.
   // Returns the updated users array.
   async upsertUser(roomId, { id, name, role }) {
-    const raw = await this.redis.eval(UPSERT_USER_SCRIPT, {
-      keys: [`room:${roomId}`],
-      arguments: [id, name, role],
-    });
-    this._invalidate(roomId);
-    return JSON.parse(raw);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (!room) return [];
+      
+      let found = false;
+      for (let i = 0; i < room.users.length; i++) {
+        if (room.users[i].name === name && room.users[i].role === role) {
+          room.users[i].id = id;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        room.users.push({ id, name, role, peerId: null });
+      }
+      return room.users;
+    }
+    
+    if (!this.redis?.isReady) return [];
+    
+    try {
+      const raw = await this.redis.eval(UPSERT_USER_SCRIPT, {
+        keys: [`room:${roomId}`],
+        arguments: [id, name, role],
+      });
+      this._invalidate(roomId);
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error upserting user: ${err.message}`);
+      return [];
+    }
   }
 
   // Atomically remove a user by socketId.
   // Returns { removed, users } — removed is null if socketId was not found.
   async removeUser(roomId, socketId) {
-    const raw = await this.redis.eval(REMOVE_USER_SCRIPT, {
-      keys: [`room:${roomId}`],
-      arguments: [socketId],
-    });
-    this._invalidate(roomId);
-    return JSON.parse(raw);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (!room) return { removed: null, users: [] };
+      
+      let removed = null;
+      const users = [];
+      for (const user of room.users) {
+        if (user.id === socketId) {
+          removed = user;
+        } else {
+          users.push(user);
+        }
+      }
+      room.users = users;
+      return { removed, users };
+    }
+    
+    if (!this.redis?.isReady) return { removed: null, users: [] };
+    
+    try {
+      const raw = await this.redis.eval(REMOVE_USER_SCRIPT, {
+        keys: [`room:${roomId}`],
+        arguments: [socketId],
+      });
+      this._invalidate(roomId);
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error removing user: ${err.message}`);
+      return { removed: null, users: [] };
+    }
   }
 
   // Kept for callers that need a full overwrite (e.g. peerId update).
   async updateUsers(roomId, users) {
-    await this.redis.hSet(`room:${roomId}`, "users", JSON.stringify(users));
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.users = users;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "users", JSON.stringify(users));
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error updating users: ${err.message}`);
+    }
   }
 
   async pushMessage(roomId, message, maxMessages = 200) {
-    const raw = await this.redis.eval(PUSH_ITEM_SCRIPT, {
-      keys: [`room:${roomId}`],
-      arguments: ["messages", JSON.stringify(message), String(maxMessages)],
-    });
-    this._invalidate(roomId);
-    return JSON.parse(raw);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (!room) return [];
+      
+      room.messages.push(message);
+      while (room.messages.length > maxMessages) {
+        room.messages.shift();
+      }
+      return room.messages;
+    }
+    
+    if (!this.redis?.isReady) return [];
+    
+    try {
+      const raw = await this.redis.eval(PUSH_ITEM_SCRIPT, {
+        keys: [`room:${roomId}`],
+        arguments: ["messages", JSON.stringify(message), String(maxMessages)],
+      });
+      this._invalidate(roomId);
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error pushing message: ${err.message}`);
+      return [];
+    }
   }
 
   async pushEvent(roomId, event, maxEvents = 500) {
-    const raw = await this.redis.eval(PUSH_ITEM_SCRIPT, {
-      keys: [`room:${roomId}`],
-      arguments: ["events", JSON.stringify(event), String(maxEvents)],
-    });
-    this._invalidate(roomId);
-    return JSON.parse(raw);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (!room) return [];
+      
+      room.events.push(event);
+      while (room.events.length > maxEvents) {
+        room.events.shift();
+      }
+      return room.events;
+    }
+    
+    if (!this.redis?.isReady) return [];
+    
+    try {
+      const raw = await this.redis.eval(PUSH_ITEM_SCRIPT, {
+        keys: [`room:${roomId}`],
+        arguments: ["events", JSON.stringify(event), String(maxEvents)],
+      });
+      this._invalidate(roomId);
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error pushing event: ${err.message}`);
+      return [];
+    }
   }
 
   async setInterviewId(roomId, interviewId) {
-    await this.redis.hSet(`room:${roomId}`, "interviewId", interviewId || "");
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.interviewId = interviewId || null;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "interviewId", interviewId || "");
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error setting interview ID: ${err.message}`);
+    }
   }
 
   async setFocusMode(roomId, enabled) {
-    await this.redis.hSet(`room:${roomId}`, "focusMode", enabled ? "true" : "false");
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.focusMode = enabled;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "focusMode", enabled ? "true" : "false");
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error setting focus mode: ${err.message}`);
+    }
   }
 
   async setTimer(roomId, endsAt) {
-    await this.redis.hSet(`room:${roomId}`, "timerEndsAt", endsAt || "");
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      if (room) room.timerEndsAt = endsAt || null;
+      return;
+    }
+    
+    if (!this.redis?.isReady) return;
+    
+    try {
+      await this.redis.hSet(`room:${roomId}`, "timerEndsAt", endsAt || "");
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error setting timer: ${err.message}`);
+    }
   }
 
   async getTimerEndsAt(roomId) {
-    const val = await this.redis.hGet(`room:${roomId}`, "timerEndsAt");
-    return val || null;
+    if (this.fallbackMode) {
+      const room = this.memoryRooms.get(roomId);
+      return room?.timerEndsAt || null;
+    }
+    
+    if (!this.redis?.isReady) return null;
+    
+    try {
+      const val = await this.redis.hGet(`room:${roomId}`, "timerEndsAt");
+      return val || null;
+    } catch (err) {
+      console.error(`[RoomStateManager] Error getting timer: ${err.message}`);
+      return null;
+    }
   }
 
   async deleteRoom(roomId) {
-    await this.redis.del(`room:${roomId}`);
-    this._invalidate(roomId);
+    if (this.fallbackMode) {
+      this.memoryRooms.delete(roomId);
+      this._invalidate(roomId);
+      return;
+    }
+    
+    if (!this.redis?.isReady) {
+      this._invalidate(roomId);
+      return;
+    }
+    
+    try {
+      await this.redis.del(`room:${roomId}`);
+      this._invalidate(roomId);
+    } catch (err) {
+      console.error(`[RoomStateManager] Error deleting room: ${err.message}`);
+    }
   }
 
   _invalidate(roomId) {

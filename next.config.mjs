@@ -18,14 +18,14 @@ const IS_PROD = process.env.NODE_ENV === "production";
 const securityHeaders = [
   // Prevent browsers from MIME-sniffing the content-type
   { key: "X-Content-Type-Options", value: "nosniff" },
-  // Block clickjacking — only allow framing from same origin
-  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  // Block clickjacking completely
+  { key: "X-Frame-Options", value: "DENY" },
   // Stop sending Referer to cross-origin destinations
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   // Restrict browser features we don't use
   {
     key: "Permissions-Policy",
-    value: "camera=(self), microphone=(self), geolocation=(), payment=()",
+    value: "camera=(self), microphone=(self), geolocation=()",
   },
   // HSTS — only set in production (localhost doesn't have TLS)
   ...(IS_PROD
@@ -55,6 +55,7 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ["@prisma/client", "bcryptjs", "pino", "pino-pretty"],
+  poweredByHeader: false,
   async headers() {
     return [
       {
