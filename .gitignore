@@ -47,3 +47,4 @@ scripts/.loadtest-env.json
 scripts/.loadtest-jwts.txt
 scripts/.loadtest-cookies.txt
 scripts/.loadtest-login-response.json
+scripts/results-latest.json
