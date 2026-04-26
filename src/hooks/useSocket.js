@@ -53,10 +53,11 @@ export default function useSocket(roomId, userName, role) {
 
     const socket = io(socketUrl, {
       transports: ["websocket"],
+      withCredentials: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 30000,
-      randomizationFactor: 0.5,   // jitter prevents thundering herd on server restart
+      randomizationFactor: 0.5,
       timeout: 10000,
       auth: { roomTicket },
     });
