@@ -464,7 +464,7 @@ io.on("connection", (socket) => {
         await roomState.updateUsers(roomId, users);
       }
     }
-    socket.to(roomId).emit("peer-id-received", { peerId, socketId: socket.id });
+    io.to(roomId).emit("peer-id-received", { peerId, socketId: socket.id });
   });
 
   socket.on("code-change", async ({ roomId: rid, code }) => {
@@ -642,7 +642,7 @@ io.on("connection", (socket) => {
 });
 
 // ─── Startup ──────────────────────────────────────────────────────────────────
-const PORT = parseInt(process.env.SOCKET_PORT || "3001", 10);
+const PORT = parseInt(process.env.PORT || "3001", 10);
 
 async function start() {
   try {

@@ -192,7 +192,7 @@ export default function useSocket(roomId, userName, role, token) {
       });
     });
     socket.on("peer-id-received", (data) => {
-      if (data?.peerId) {
+      if (data?.peerId && data.socketId !== socket.id) {
         handlersRef.current.onPeerIdReceived?.(data.peerId);
       }
     });
