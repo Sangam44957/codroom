@@ -7,7 +7,7 @@ import { toast } from "sonner";
 const MAX_MESSAGES = 200;
 const MAX_TIMELINE_EVENTS = 500; // Cap timeline events to prevent memory growth
 
-export default function useSocket(roomId, userName, role) {
+export default function useSocket(roomId, userName, role, token) {
   const socketRef = useRef(null);
   const hasConnectedOnceRef = useRef(false);
   const reconnectDetectedRef = useRef(false);
@@ -53,13 +53,12 @@ export default function useSocket(roomId, userName, role) {
 
     const socket = io(socketUrl, {
       transports: ["websocket"],
-      withCredentials: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 30000,
       randomizationFactor: 0.5,
       timeout: 10000,
-      auth: { roomTicket },
+      auth: { roomTicket, token },
     });
 
     socketRef.current = socket;

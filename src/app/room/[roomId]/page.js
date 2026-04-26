@@ -86,6 +86,7 @@ export default function RoomPage() {
   const editorFocusRef = useRef(null); // set by CodeEditor via onEditorMount
 
   const [session, setSession] = useState({ userName: "", role: "candidate", joined: false });
+  const [authToken, setAuthToken] = useState(null);
   const [interviewId, setInterviewId] = useState(null);
   const [interviewStatus, setInterviewStatus] = useState("waiting");
   // countdown timer — null means no timer active
@@ -119,7 +120,7 @@ export default function RoomPage() {
     onCodeUpdate, onLanguageUpdate, onOutputUpdate, onPeerIdReceived, onInterviewStarted,
     onFocusModeChanged, onWhiteboardDraw, onWhiteboardClear, onRemoteCameraToggle,
     onRemoteMicToggle, onCandidateUnlocked, onRemoteCursor,
-  } = useSocket(session.joined ? roomId : null, session.userName, session.role);
+  } = useSocket(session.joined ? roomId : null, session.userName, session.role, authToken);
 
   // Define all callbacks at the top level to avoid conditional hook calls
   const handleEscapeKey = useCallback((e) => {
@@ -250,6 +251,10 @@ export default function RoomPage() {
           const myId = meData.user?.userId ?? meData.user?.id;
           if (myId && myId === data.room.createdById) {
             setSession({ userName: meData.user.name, role: "interviewer", joined: true });
+            fetch("/api/auth/socket-token")
+              .then((r) => r.json())
+              .then((d) => { if (d.token) setAuthToken(d.token); })
+              .catch(() => {});
           }
         }
       } catch {}
