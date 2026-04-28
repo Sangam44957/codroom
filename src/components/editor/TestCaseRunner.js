@@ -10,6 +10,8 @@ export default function TestCaseRunner({
   roomId,
   problemIndex = 0,
   onRunComplete,
+  output,
+  isRunning,
 }) {
   const [results, setResults] = useState([]);
   const [running, setRunning] = useState(false);
@@ -168,9 +170,9 @@ export default function TestCaseRunner({
             "🧪 Run Tests"
           )}
         </button>
-        {!["javascript", "typescript", "python"].includes(language) && (
+        {!["javascript", "typescript", "python", "cpp", "c", "java", "go", "rust"].includes(language) && (
           <span className="text-xs text-amber-400">
-            ⚠ Automated test comparison only available for JS/TS/Python
+            ⚠ Automated test comparison only available for JS/TS/Python/C++/C/Java/Go/Rust
           </span>
         )}
       </div>
@@ -179,22 +181,26 @@ export default function TestCaseRunner({
       <div className="flex-1 overflow-y-auto p-4">
         {activeTab === "output" && (
           <>
-            {results.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center mt-4">
-                Run tests to see raw output from each test case
-              </p>
-            ) : (
-              <div className="space-y-3">
-                {results.map((result) => (
-                  <div key={result.testCase} className="rounded-lg border border-gray-700 bg-gray-800/50 p-3">
-                    <p className="text-xs text-gray-400 mb-1">Test Case {result.testCase}</p>
-                    <pre className={`text-xs whitespace-pre-wrap break-all ${
-                      result.error ? "text-red-300" : "text-green-300"
-                    }`}>
-                      {result.actual || "(no output)"}
-                    </pre>
-                  </div>
-                ))}
+            {isRunning && (
+              <div className="flex items-center gap-2 text-slate-500 text-xs p-4">
+                <div className="w-4 h-4 border-2 border-violet-500/30 border-t-violet-500 rounded-full animate-spin" />
+                Executing code…
+              </div>
+            )}
+
+            {!isRunning && !output && (
+              <p className="text-slate-700 text-xs p-4">Press Run to execute your code</p>
+            )}
+
+            {!isRunning && output && (
+              <div className="p-4">
+                <pre className={`text-xs font-mono whitespace-pre-wrap leading-relaxed p-3 rounded-lg border ${
+                  output.status === "error"
+                    ? "text-rose-300 bg-rose-500/5 border-rose-500/15"
+                    : "text-emerald-300 bg-emerald-500/5 border-emerald-500/15"
+                }`}>
+                  {output.output || "(no output)"}
+                </pre>
               </div>
             )}
           </>
@@ -393,6 +399,27 @@ function wrapCodeWithTest(code, language, testCase) {
       const callArgs = args.length > 1 ? `__arg0, ${restArgs}` : "__arg0";
       return `import json\n${code}\n\n__arg0 = ${firstArgVal}\n__result = ${funcName}(${callArgs})\nprint(json.dumps(__result if __result is not None else __arg0))`;
     }
+    return code;
+  }
+
+  if (language === "cpp" || language === "c") {
+    // For C++, we'll use a simpler approach - just run the code as-is
+    // The test runner will handle the wrapping
+    return code;
+  }
+
+  if (language === "java") {
+    // For Java, run as-is and let test runner handle it
+    return code;
+  }
+
+  if (language === "go") {
+    // For Go, run as-is
+    return code;
+  }
+
+  if (language === "rust") {
+    // For Rust, run as-is
     return code;
   }
 

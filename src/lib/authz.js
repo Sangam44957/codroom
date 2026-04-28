@@ -8,6 +8,7 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
 import { getCurrentUser } from "@/lib/auth";
+import { timingSafeEqual } from "crypto";
 
 // ─── Response helpers ────────────────────────────────────────────────────────
 
@@ -121,7 +122,7 @@ export async function requireSnapshotWriteAccess(request, interviewId) {
   if (!internalSecret) throw FORBIDDEN();
 
   // Internal service call from socket server — verified by shared secret
-  if (secret === internalSecret) {
+  if (secret && internalSecret && timingSafeEqual(Buffer.from(secret), Buffer.from(internalSecret))) {
     const interview = await prisma.interview.findUnique({
       where: { id: interviewId },
     });

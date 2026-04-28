@@ -1,22 +1,44 @@
 import { NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
+import { jwtVerify } from "jose";
+
+const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 
 /**
  * GET /api/turn
- * Returns ICE server config to the authenticated client.
- * Credentials are read server-side — never exposed in the JS bundle.
- *
- * Supports two providers via env vars:
- *
- * Static (self-hosted coturn / any TURN):
- *   TURN_URL=turn:your-server.com:3478
- *   TURN_USERNAME=user
- *   TURN_CREDENTIAL=secret
- *
- * Metered.ca (auto-rotating short-lived credentials):
- *   METERED_API_KEY=<key>
- *   METERED_APP_NAME=<app-name>   (subdomain, e.g. "codroom")
+ * Returns ICE server config to authenticated users or valid room participants.
+ * Requires either auth cookie or room-ticket cookie.
  */
-export async function GET() {
+export async function GET(request) {
+  // Check for authenticated user first
+  const user = await getCurrentUser();
+  
+  // If no user auth, check for room ticket cookie
+  if (!user) {
+    const cookies = request.headers.get('cookie') || '';
+    const roomTicketMatch = cookies.match(/room-ticket-([^=;]+)=([^;]+)/);
+    
+    if (!roomTicketMatch) {
+      return NextResponse.json(
+        { error: "Authentication required" }, 
+        { status: 401 }
+      );
+    }
+    
+    // Verify room ticket JWT is valid
+    const [, roomId, ticketValue] = roomTicketMatch;
+    try {
+      const { payload } = await jwtVerify(ticketValue, SECRET);
+      if (payload.roomId !== roomId || payload.type !== "room-session") {
+        throw new Error('Invalid ticket');
+      }
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid room session" }, 
+        { status: 401 }
+      );
+    }
+  }
   const iceServers = [
     { urls: "stun:stun.l.google.com:19302" },
     { urls: "stun:stun1.l.google.com:19302" },

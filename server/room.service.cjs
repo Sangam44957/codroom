@@ -47,13 +47,23 @@ async function updateRoomOnCandidateJoin(roomId, candidateName) {
     where: { id: roomId },
     select: { status: true, candidateName: true },
   });
-  if (!room) return;
+  if (!room) return { wasFirstJoin: false };
+  
   const data = {};
-  if (room.status === "waiting") data.status = "active";
-  if (!room.candidateName && candidateName) data.candidateName = candidateName;
+  const wasFirstJoin = room.status === "waiting";
+  
+  if (room.status === "waiting") {
+    data.status = "active";
+  }
+  if (!room.candidateName && candidateName) {
+    data.candidateName = candidateName;
+  }
+  
   if (Object.keys(data).length > 0) {
     await prisma.room.update({ where: { id: roomId }, data });
   }
+  
+  return { wasFirstJoin };
 }
 
 module.exports = { getRoomOwnerData, getMessages, persistMessage, updateRoomOnCandidateJoin };

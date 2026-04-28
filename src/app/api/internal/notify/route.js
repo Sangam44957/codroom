@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
 import { notifyCandidateJoined } from "@/lib/email";
+import { timingSafeEqual } from "crypto";
 
 export async function POST(request) {
   const secret = request.headers.get("x-internal-secret");
-  if (!process.env.INTERNAL_SECRET || secret !== process.env.INTERNAL_SECRET) {
+  const internalSecret = process.env.INTERNAL_SECRET;
+  
+  if (!internalSecret || !secret || !timingSafeEqual(Buffer.from(secret), Buffer.from(internalSecret))) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
@@ -17,14 +20,12 @@ export async function POST(request) {
     where: { id: roomId },
     select: {
       title: true,
-      status: true,
       createdBy: { select: { email: true } },
     },
   });
 
-  // Only notify if room was waiting (first join, not a rejoin)
-  if (!room || room.status !== "waiting") {
-    return NextResponse.json({ skipped: true });
+  if (!room) {
+    return NextResponse.json({ error: "Room not found" }, { status: 404 });
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";

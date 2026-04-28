@@ -34,7 +34,7 @@ function sanitizeName(name) {
     .slice(0, 80);              // Names limited to 80 chars
 }
 
-export {
+module.exports = {
   sanitizeText,
   sanitizeName,
 };

@@ -1,0 +1,233 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codroom
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: codroom-secrets
+  namespace: codroom
+type: Opaque
+stringData:
+  DATABASE_URL: "postgresql://user:pass@postgres:5432/codroom"
+  JWT_SECRET: "your-jwt-secret-32-chars-minimum"
+  INTERNAL_SECRET: "your-internal-secret-32-chars"
+  GROQ_API_KEY: "your-groq-api-key"
+  BREVO_API_KEY: "your-brevo-api-key"
+  REDIS_URL: "redis://redis:6379"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codroom-config
+  namespace: codroom
+data:
+  NODE_ENV: "production"
+  LOG_LEVEL: "info"
+  SOCKET_PORT: "3001"
+  NEXT_PUBLIC_APP_URL: "https://codroom.yourdomain.com"
+  NEXT_PUBLIC_SOCKET_URL: "wss://socket.codroom.yourdomain.com"
+  BREVO_SENDER_EMAIL: "noreply@yourdomain.com"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codroom-app
+  namespace: codroom
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: codroom-app
+  template:
+    metadata:
+      labels:
+        app: codroom-app
+    spec:
+      containers:
+      - name: app
+        image: ghcr.io/yourorg/codroom-app:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: PORT
+          value: "3000"
+        envFrom:
+        - configMapRef:
+            name: codroom-config
+        - secretRef:
+            name: codroom-secrets
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codroom-socket
+  namespace: codroom
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: codroom-socket
+  template:
+    metadata:
+      labels:
+        app: codroom-socket
+    spec:
+      containers:
+      - name: socket
+        image: ghcr.io/yourorg/codroom-socket:latest
+        ports:
+        - containerPort: 3001
+        envFrom:
+        - configMapRef:
+            name: codroom-config
+        - secretRef:
+            name: codroom-secrets
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "125m"
+          limits:
+            memory: "512Mi"
+            cpu: "250m"
+        livenessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 3001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codroom-app-service
+  namespace: codroom
+spec:
+  selector:
+    app: codroom-app
+  ports:
+  - port: 80
+    targetPort: 3000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codroom-socket-service
+  namespace: codroom
+spec:
+  selector:
+    app: codroom-socket
+  ports:
+  - port: 80
+    targetPort: 3001
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codroom-ingress
+  namespace: codroom
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  tls:
+  - hosts:
+    - codroom.yourdomain.com
+    - socket.codroom.yourdomain.com
+    secretName: codroom-tls
+  rules:
+  - host: codroom.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codroom-app-service
+            port:
+              number: 80
+  - host: socket.codroom.yourdomain.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: codroom-socket-service
+            port:
+              number: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codroom-app-hpa
+  namespace: codroom
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codroom-app
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: codroom-socket-hpa
+  namespace: codroom
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: codroom-socket
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

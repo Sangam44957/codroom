@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import CodeEditor, { LANGUAGE_CONFIG, buildInitialFiles } from "@/components/editor/CodeEditor";
 import OutputPanel from "@/components/editor/OutputPanel";
 import ProblemPanel from "@/components/editor/ProblemPanel";
+import ScratchPad from "@/components/editor/ScratchPad";
 import TestCaseRunner from "@/components/editor/TestCaseRunner";
 import ChatPanel from "@/components/ui/ChatPanel";
 import NotesPanel from "@/components/ui/NotesPanel";
@@ -71,6 +72,7 @@ export default function RoomPage() {
   const [output, setOutput] = useState(null);
   const [isRunning, setIsRunning] = useState(false);
   const [showProblem, setShowProblem] = useState(true);
+  const [showScratchPad, setShowScratchPad] = useState(false);
   const [showOutput, setShowOutput] = useState(true);
   const [rightTab, setRightTab] = useState("chat");
   const [deleting, setDeleting] = useState(false);
@@ -79,6 +81,7 @@ export default function RoomPage() {
   const [editorFullscreen, setEditorFullscreen] = useState(false);
   const [boardFullscreen, setBoardFullscreen] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [localWarningCount, setLocalWarningCount] = useState(0);
 
   // Resizable problem panel width (px)
   const [problemWidth, setProblemWidth] = useState(320);
@@ -87,6 +90,7 @@ export default function RoomPage() {
 
   const [session, setSession] = useState({ userName: "", role: "candidate", joined: false });
   const [authToken, setAuthToken] = useState(null);
+  const [roomTicket, setRoomTicket] = useState(null);
   const [interviewId, setInterviewId] = useState(null);
   const [interviewStatus, setInterviewStatus] = useState("waiting");
   // countdown timer — null means no timer active
@@ -99,11 +103,25 @@ export default function RoomPage() {
   // Drive security monitor from focus mode, not interview status
   const { violations, warningCount, isLocked, unlock, requestFullscreen } = useSecurityMonitor(
     focusMode && session.role === "candidate",
-    // Violations go to security panel only — no chat spam
-    null,
+    // Send detailed violation info to interviewer via chat
+    (violation) => {
+      const violationMessages = {
+        tab_switch: "🚨 Candidate switched to another tab",
+        window_blur: "⚠️ Candidate clicked outside browser window", 
+        fullscreen_exit: "📱 Candidate exited fullscreen mode",
+        paste_detected: "📋 Candidate pasted content outside editor",
+        alt_tab: "⌨️ Candidate pressed Alt+Tab",
+        devtools: "🔧 Candidate tried to open DevTools",
+        copy_detected: "📄 Candidate copied substantial content",
+        right_click: "🖱️ Candidate used right-click menu",
+        external_script: "🛡️ Blocked external script injection"
+      };
+      const message = violationMessages[violation.type] || `🚨 Security violation: ${violation.type}`;
+      sendMessage(`${message} (Warning #${warningCount + 1})`);
+      setLocalWarningCount(warningCount + 1);
+    },
     (count) => {
-      // Only notify about lock, don't auto-end interview
-      sendMessage(`🔒 Session locked after ${count} security violations. Interviewer can unlock or end interview.`);
+      sendMessage(`🔒 Session locked after ${count} security violations. Click "Unlock" to restore access.`);
     }
   );
 
@@ -120,7 +138,7 @@ export default function RoomPage() {
     onCodeUpdate, onLanguageUpdate, onOutputUpdate, onPeerIdReceived, onInterviewStarted,
     onFocusModeChanged, onWhiteboardDraw, onWhiteboardClear, onRemoteCameraToggle,
     onRemoteMicToggle, onCandidateUnlocked, onRemoteCursor,
-  } = useSocket(session.joined ? roomId : null, session.userName, session.role, authToken);
+  } = useSocket(session.joined ? roomId : null, session.userName, session.role, authToken, session.roomTicket || roomTicket);
 
   // Define all callbacks at the top level to avoid conditional hook calls
   const handleEscapeKey = useCallback((e) => {
@@ -197,6 +215,26 @@ export default function RoomPage() {
     const timeoutId = setTimeout(() => controller.abort(), 15000);
     
     try {
+      // Check for existing session first
+      const sessionRes = await fetch(`/api/rooms/${roomId}/session`, {
+        signal: controller.signal,
+      });
+      
+      if (sessionRes.ok) {
+        const sessionData = await sessionRes.json();
+        if (sessionData.hasSession) {
+          setRoomTicket(sessionData.roomTicket);
+          if (sessionData.candidateName) {
+            setSession({ 
+              userName: sessionData.candidateName, 
+              role: "candidate", 
+              joined: true,
+              roomTicket: sessionData.roomTicket
+            });
+          }
+        }
+      }
+
       const rawToken = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("joinToken") : null;
 
@@ -214,9 +252,18 @@ export default function RoomPage() {
           return;
         }
         const joinData = await exchangeRes.json();
+        // Store the room ticket for Socket.IO authentication
+        if (joinData.roomTicket) {
+          setRoomTicket(joinData.roomTicket);
+        }
         // If the room has a pre-set candidate name, lock it in immediately
         if (joinData.candidateName) {
-          setSession({ userName: joinData.candidateName, role: "candidate", joined: true });
+          setSession({ 
+            userName: joinData.candidateName, 
+            role: "candidate", 
+            joined: true,
+            roomTicket: joinData.roomTicket // Store ticket in session too
+          });
         }
         window.history.replaceState({}, "", `/room/${roomId}`);
       }
@@ -465,13 +512,20 @@ export default function RoomPage() {
     onToggleChat: () => setRightTab((t) => t === "chat" ? "video" : "chat"),
     onToggleWhiteboard: () => setRightTab((t) => t === "board" ? "chat" : "board"),
     onFocusEditor: () => editorFocusRef.current?.(),
-    onResetLayout: () => { setShowProblem(true); setShowOutput(true); setProblemWidth(320); },
+    onResetLayout: () => { setShowProblem(true); setShowScratchPad(false); setShowOutput(true); setProblemWidth(320); },
   });
 
   function handleJoin(e) {
     e.preventDefault();
     const name = e.target.elements.name?.value?.trim() || session.userName;
-    if (name) setSession({ userName: name, role: "candidate", joined: true });
+    if (name) {
+      setSession({ 
+        userName: name, 
+        role: "candidate", 
+        joined: true,
+        roomTicket: roomTicket // Use the stored roomTicket
+      });
+    }
   }
 
   async function copyInviteLink() {
@@ -571,11 +625,11 @@ export default function RoomPage() {
   return (
     <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200" onKeyDown={handleEscapeKey}>
 
-      {(warningCount > 0 || isLocked) && (
+      {(localWarningCount > 0 || isLocked) && (
         <SecurityWarning
-          warningCount={warningCount}
+          warningCount={localWarningCount}
           isLocked={isLocked}
-          onDismiss={() => {}}
+          onDismiss={() => setLocalWarningCount(0)}
         />
       )}
 
@@ -725,6 +779,24 @@ export default function RoomPage() {
               Problem
             </button>
           )}
+          {/* Interviewer-only: Toggle between Problem and Scratch Pad */}
+          {isInterviewer && (
+            <button
+              onClick={() => {
+                setShowScratchPad(!showScratchPad);
+                if (!showScratchPad) {
+                  setShowProblem(false); // Hide problem when showing scratch pad
+                }
+              }}
+              className={`flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-all ${
+                showScratchPad ? "bg-cyan-600/20 text-cyan-300 border border-cyan-500/30" : "text-slate-500 hover:text-slate-300 hover:bg-white/[0.04]"
+              }`}
+              title="Toggle Scratch Pad for notes and testing"
+            >
+              <PenLine size={12} />
+              Scratch
+            </button>
+          )}
           <button
             onClick={() => setShowOutput(!showOutput)}
             className={`px-2.5 py-1 text-xs rounded-md transition-all ${
@@ -867,8 +939,21 @@ export default function RoomPage() {
       {/* ── Main body ── */}
       <div ref={containerRef} className="flex-1 flex overflow-hidden">
 
-        {/* Problem panel — resizable with tabs for multiple problems */}
-        {!editorFullscreen && showProblem && (() => {
+        {/* Problem panel OR Scratch Pad — resizable */}
+        {!editorFullscreen && (showProblem || showScratchPad) && (() => {
+          if (showScratchPad && isInterviewer) {
+            // Show scratch pad for interviewer
+            return (
+              <>
+                <div style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="flex-shrink-0 overflow-hidden border-r border-white/[0.05] flex flex-col">
+                  <ScratchPad language={language} roomId={roomId} />
+                </div>
+                <ResizeDivider onDrag={handleProblemResize} />
+              </>
+            );
+          }
+          
+          // Show problem panel
           const allProblems = room.problems?.length
             ? room.problems.map((rp) => rp.problem)
             : room.problem ? [room.problem] : [];
@@ -935,6 +1020,8 @@ export default function RoomPage() {
                     language={language}
                     roomId={roomId}
                     problemIndex={activeProblemIdx}
+                    output={output}
+                    isRunning={isRunning}
                   />
                 ) : (
                   <OutputPanel output={output} isRunning={isRunning} />

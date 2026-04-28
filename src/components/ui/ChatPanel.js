@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Send } from "lucide-react";
+import { sanitizeChatMessage } from "@/lib/sanitize";
 
 // Collapse consecutive system messages about the same person into one
 function collapseSystemMessages(messages) {
@@ -58,7 +59,7 @@ export default function ChatPanel({ messages, onSendMessage, userName }) {
               <div key={msg.id} className="flex items-center gap-2 my-1">
                 <div className="flex-1 h-px bg-white/[0.04]" />
                 <span className="text-slate-600 text-[11px] whitespace-nowrap">
-                  {msg.text}{msg.count > 1 ? ` ×${msg.count}` : ""}
+                  {sanitizeChatMessage(msg.text)}{msg.count > 1 ? ` ×${msg.count}` : ""}
                 </span>
                 <div className="flex-1 h-px bg-white/[0.04]" />
               </div>
@@ -74,12 +75,12 @@ export default function ChatPanel({ messages, onSendMessage, userName }) {
                 }`}>{isMe ? "You" : msg.sender}</span>
                 <span className="text-slate-700 text-xs">{formatTime(msg.timestamp)}</span>
               </div>
-              <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed ${
+              <div className={`max-w-[85%] px-3 py-2 rounded-xl text-sm leading-relaxed whitespace-pre-wrap ${
                 isMe
                   ? "bg-violet-600 text-white"
                   : "bg-white/[0.06] text-slate-200 border border-white/[0.06]"
               }`}>
-                {msg.text}
+                {sanitizeChatMessage(msg.text)}
               </div>
             </div>
           );

@@ -130,86 +130,136 @@ export async function generateReport(interviewId) {
     };
   }
 
-  const allProblems = interview.room.problems?.length
-    ? interview.room.problems.map((rp) => rp.problem)
-    : interview.room.problem ? [interview.room.problem] : [];
-
-  let testResults = null;
-  const primaryProblem = allProblems[0] || null;
-  if (primaryProblem?.testCases?.length) {
-    try {
-      testResults = await runTestsForReport(
-        interview.finalCode,
-        interview.language,
-        primaryProblem.testCases
-      );
-    } catch (e) {
-      logger.warn({ err: e, interviewId }, "test runner failed, proceeding without results");
-    }
-  }
-
-  let evaluation;
-  let aiUnavailable = false;
-  try {
-    evaluation = await evaluateCode({
-      code: interview.finalCode,
-      language: interview.language,
-      problems: allProblems,
-      duration: interview.duration,
-      testResults,
+  // Atomic check-and-update: prevent race conditions by setting status to 'generating'
+  // Only proceed if no report exists and status allows generation
+  const reportGeneration = await prisma.$transaction(async (tx) => {
+    // Check current state within transaction
+    const current = await tx.interview.findUnique({
+      where: { id: interviewId },
+      select: { id: true, status: true, report: { select: { id: true } } }
     });
-  } catch (e) {
-    const isBreaker = e instanceof CircuitBreakerOpenError;
-    if (isBreaker) {
-      logger.warn({ breaker: "groq-ai", interviewId }, "AI circuit open, using fallback scores");
-    } else {
-      logger.error({ err: e, interviewId }, "AI evaluation failed, using fallback scores");
-    }
-    aiUnavailable = true;
-    evaluation = {
-      correctness: testResults ? Math.round((testResults.passed / Math.max(testResults.total, 1)) * 10) : 5,
-      codeQuality: 5,
-      timeComplexity: "Unknown",
-      spaceComplexity: "Unknown",
-      edgeCaseHandling: 5,
-      overallScore: testResults ? Math.round((testResults.passed / Math.max(testResults.total, 1)) * 100) : 50,
-      recommendation: "BORDERLINE",
-      summary: "AI evaluation was unavailable at the time of report generation. Scores are estimated from automated test results where available.",
-      improvements: "Please re-generate the report when the AI service is available for a full analysis.",
-      strengths: "N/A — AI evaluation unavailable.",
-      weaknesses: "N/A — AI evaluation unavailable.",
-    };
-  }
 
-  assertEnum(evaluation.recommendation, RECOMMENDATION, "recommendation");
-  const report = await createReport({
-    interviewId,
-    correctness: evaluation.correctness,
-    codeQuality: evaluation.codeQuality,
-    timeComplexity: evaluation.timeComplexity,
-    spaceComplexity: evaluation.spaceComplexity,
-    edgeCaseHandling: evaluation.edgeCaseHandling,
-    overallScore: evaluation.overallScore,
-    recommendation: evaluation.recommendation,
-    summary: aiUnavailable
-      ? evaluation.summary
-      : `${evaluation.summary}\n\n**Strengths:**\n${evaluation.strengths}\n\n**Weaknesses:**\n${evaluation.weaknesses}`,
-    improvements: evaluation.improvements,
+    if (!current) throw new Error("Interview not found");
+    if (current.report) {
+      // Report already exists, return it
+      return { existing: true, reportId: current.report.id };
+    }
+    if (current.status === "generating") {
+      // Another request is already generating
+      return { generating: true };
+    }
+    if (current.status !== "completed") {
+      throw new Error("Interview must be completed before generating report");
+    }
+
+    // Set status to generating to prevent concurrent generation
+    await tx.interview.update({
+      where: { id: interviewId },
+      data: { status: "generating" }
+    });
+
+    return { canGenerate: true };
   });
 
-  const nextStatus = aiUnavailable ? "completed" : "evaluated";
-  assertEnum(nextStatus, INTERVIEW_STATUS, "interview status");
-  await updateInterview(interviewId, { status: nextStatus });
+  // Handle different transaction outcomes
+  if (reportGeneration.existing) {
+    const existingReport = await findReport(interviewId);
+    return { report: existingReport, created: false };
+  }
+  if (reportGeneration.generating) {
+    return { error: "Report generation already in progress", status: 409 };
+  }
+  if (!reportGeneration.canGenerate) {
+    return { error: "Unable to generate report at this time", status: 400 };
+  }
 
-  // Notify interviewer — fire-and-forget, never block the response
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  notifyReportReady({
-    interviewerEmail: interview.room.createdBy?.email,
-    candidateName: interview.room.candidateName,
-    reportUrl: `${appUrl}/room/${interview.room.id}/report`,
-  }).catch((err) => logger.warn({ err, interviewId }, "report-ready notify failed"));
+  try {
+    const allProblems = interview.room.problems?.length
+      ? interview.room.problems.map((rp) => rp.problem)
+      : interview.room.problem ? [interview.room.problem] : [];
 
-  return { report, created: true, aiUnavailable };
+    let testResults = null;
+    const primaryProblem = allProblems[0] || null;
+    if (primaryProblem?.testCases?.length) {
+      try {
+        testResults = await runTestsForReport(
+          interview.finalCode,
+          interview.language,
+          primaryProblem.testCases
+        );
+      } catch (e) {
+        logger.warn({ err: e, interviewId }, "test runner failed, proceeding without results");
+      }
+    }
+
+    let evaluation;
+    let aiUnavailable = false;
+    try {
+      evaluation = await evaluateCode({
+        code: interview.finalCode,
+        language: interview.language,
+        problems: allProblems,
+        duration: interview.duration,
+        testResults,
+      });
+    } catch (e) {
+      const isBreaker = e instanceof CircuitBreakerOpenError;
+      if (isBreaker) {
+        logger.warn({ breaker: "groq-ai", interviewId }, "AI circuit open, using fallback scores");
+      } else {
+        logger.error({ err: e, interviewId }, "AI evaluation failed, using fallback scores");
+      }
+      aiUnavailable = true;
+      evaluation = {
+        correctness: testResults ? Math.round((testResults.passed / Math.max(testResults.total, 1)) * 10) : 5,
+        codeQuality: 5,
+        timeComplexity: "Unknown",
+        spaceComplexity: "Unknown",
+        edgeCaseHandling: 5,
+        overallScore: testResults ? Math.round((testResults.passed / Math.max(testResults.total, 1)) * 100) : 50,
+        recommendation: "BORDERLINE",
+        summary: "AI evaluation was unavailable at the time of report generation. Scores are estimated from automated test results where available.",
+        improvements: "Please re-generate the report when the AI service is available for a full analysis.",
+        strengths: "N/A — AI evaluation unavailable.",
+        weaknesses: "N/A — AI evaluation unavailable.",
+      };
+    }
+
+    assertEnum(evaluation.recommendation, RECOMMENDATION, "recommendation");
+    const report = await createReport({
+      interviewId,
+      correctness: evaluation.correctness,
+      codeQuality: evaluation.codeQuality,
+      timeComplexity: evaluation.timeComplexity,
+      spaceComplexity: evaluation.spaceComplexity,
+      edgeCaseHandling: evaluation.edgeCaseHandling,
+      overallScore: evaluation.overallScore,
+      recommendation: evaluation.recommendation,
+      summary: aiUnavailable
+        ? evaluation.summary
+        : `${evaluation.summary}\n\n**Strengths:**\n${evaluation.strengths}\n\n**Weaknesses:**\n${evaluation.weaknesses}`,
+      improvements: evaluation.improvements,
+    });
+
+    const nextStatus = aiUnavailable ? "completed" : "evaluated";
+    assertEnum(nextStatus, INTERVIEW_STATUS, "interview status");
+    await updateInterview(interviewId, { status: nextStatus });
+
+    // Notify interviewer — fire-and-forget, never block the response
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    notifyReportReady({
+      interviewerEmail: interview.room.createdBy?.email,
+      candidateName: interview.room.candidateName,
+      reportUrl: `${appUrl}/room/${interview.room.id}/report`,
+    }).catch((err) => logger.warn({ err, interviewId }, "report-ready notify failed"));
+
+    return { report, created: true, aiUnavailable };
+  } catch (error) {
+    // Reset status on failure
+    await updateInterview(interviewId, { status: "completed" }).catch(() => {});
+    logger.error({ err: error, interviewId }, "report generation failed");
+    throw error;
+  }
 }
 
 export async function getReport(interviewId) {

@@ -1,21 +1,16 @@
 import { NextResponse } from "next/server";
 import { submitCode, parseResult } from "@/lib/judge0";
-import { getCurrentUser } from "@/lib/auth";
 import { rateLimit } from "@/lib/rateLimit";
-import { checkCsrf } from "@/lib/csrf";
 
 const MAX_CODE_BYTES = 64 * 1024; // 64 KB
 
 export async function POST(request) {
-  const csrf = checkCsrf(request);
-  if (csrf) return csrf;
-
-  const user = await getCurrentUser();
-  if (!user) {
-    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  }
-
-  const rl = await rateLimit("execute", user.userId, { limit: 10, windowMs: 60_000 });
+  // Allow anyone to execute code - rate limit by IP instead of user
+  const clientIP = request.headers.get("x-forwarded-for")?.split(",")[0].trim() 
+    || request.headers.get("x-real-ip") 
+    || "anonymous";
+  
+  const rl = await rateLimit("execute", clientIP, { limit: 20, windowMs: 60_000 });
   if (!rl.allowed) {
     return NextResponse.json(
       { error: `Rate limit exceeded. Try again in ${rl.retryAfter}s.` },
@@ -23,7 +18,7 @@ export async function POST(request) {
         status: 429,
         headers: {
           "Retry-After": String(rl.retryAfter),
-          "X-RateLimit-Limit": "10",
+          "X-RateLimit-Limit": "20",
           "X-RateLimit-Remaining": "0",
         },
       }

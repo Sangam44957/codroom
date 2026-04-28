@@ -9,55 +9,48 @@ datasource db {
 }
 
 model User {
-  id                 String    @id @default(cuid())
-  name               String
-  email              String    @unique
-  password           String
-  emailVerified      Boolean   @default(false)
-  verifyToken        String?   @unique
-  verifyOtp          String?
-  verifyOtpExpiry    DateTime?
-  resetToken         String?   @unique
-  resetTokenExpiry   DateTime?
-  resetOtp           String?
-  resetOtpExpiry     DateTime?
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
-
-  rooms     Room[]
-  problems  Problem[]
-  templates InterviewTemplate[]
-  pipelines HiringPipeline[]
+  id               String              @id @default(cuid())
+  name             String
+  email            String              @unique
+  password         String
+  createdAt        DateTime            @default(now())
+  emailVerified    Boolean             @default(false)
+  resetOtp         String?
+  resetOtpExpiry   DateTime?
+  resetToken       String?             @unique
+  resetTokenExpiry DateTime?
+  verifyOtp        String?
+  verifyOtpExpiry  DateTime?
+  verifyToken      String?             @unique
+  updatedAt        DateTime            @updatedAt
+  pipelines        HiringPipeline[]
+  templates        InterviewTemplate[]
+  problems         Problem[]
+  rooms            Room[]
 
   @@map("users")
 }
 
 model Room {
-  id            String   @id @default(cuid())
+  id            String             @id @default(cuid())
   title         String
-  status        String   @default("waiting")
-  language      String   @default("javascript")
+  status        String             @default("waiting")
+  language      String             @default("javascript")
   candidateName String?
-  joinToken     String   @unique @default(cuid())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
-  createdById String
-  createdBy   User    @relation(fields: [createdById], references: [id])
-
-  templateId  String?
-  template    InterviewTemplate? @relation(fields: [templateId], references: [id])
-
-  pipelineId  String?
-  pipeline    HiringPipeline? @relation(fields: [pipelineId], references: [id])
-
-  // legacy single-problem (kept for backwards compat, nullable)
-  problemId String?
-  problem   Problem? @relation(fields: [problemId], references: [id])
-
-  problems  RoomProblem[]
-  interview Interview?
-  messages  ChatMessage[]
+  createdAt     DateTime           @default(now())
+  createdById   String
+  problemId     String?
+  joinToken     String             @unique @default(cuid())
+  templateId    String?
+  pipelineId    String?
+  updatedAt     DateTime           @updatedAt
+  messages      ChatMessage[]
+  interview     Interview?
+  problems      RoomProblem[]
+  createdBy     User               @relation(fields: [createdById], references: [id])
+  pipeline      HiringPipeline?    @relation(fields: [pipelineId], references: [id])
+  problem       Problem?           @relation(fields: [problemId], references: [id])
+  template      InterviewTemplate? @relation(fields: [templateId], references: [id])
 
   @@index([createdById, createdAt])
   @@index([pipelineId])
@@ -67,12 +60,10 @@ model Room {
 model RoomProblem {
   id        String  @id @default(cuid())
   order     Int     @default(0)
-
   roomId    String
-  room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
-
   problemId String
   problem   Problem @relation(fields: [problemId], references: [id])
+  room      Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@unique([roomId, problemId])
   @@index([roomId, order])
@@ -80,27 +71,23 @@ model RoomProblem {
 }
 
 model Problem {
-  id          String  @id @default(cuid())
-  title       String
-  description String
-  difficulty  String
-  topic       String
-  starterCode String?
-  testCases   Json?
-
-  // Extended library fields
-  companies     String[]  @default([])
-  estimatedTime Int?                        // minutes
-  isPublic      Boolean   @default(false)
-  usageCount    Int       @default(0)
-  updatedAt     DateTime  @updatedAt
-
-  createdById String?
-  createdBy   User?   @relation(fields: [createdById], references: [id])
-
-  tags      Tag[]
-  rooms     Room[]
-  roomLinks RoomProblem[]
+  id            String        @id @default(cuid())
+  title         String
+  description   String
+  difficulty    String
+  topic         String
+  starterCode   String?
+  testCases     Json?
+  createdById   String?
+  companies     String[]      @default([])
+  estimatedTime Int?
+  isPublic      Boolean       @default(false)
+  usageCount    Int           @default(0)
+  updatedAt     DateTime      @updatedAt
+  createdBy     User?         @relation(fields: [createdById], references: [id])
+  roomLinks     RoomProblem[]
+  rooms         Room[]
+  tags          Tag[]         @relation("ProblemToTag")
 
   @@index([difficulty, topic])
   @@map("problems")
@@ -109,38 +96,35 @@ model Problem {
 model Tag {
   id       String    @id @default(cuid())
   name     String    @unique
-  problems Problem[]
+  problems Problem[] @relation("ProblemToTag")
 
   @@map("tags")
 }
 
 model Interview {
-  id        String    @id @default(cuid())
+  id        String            @id @default(cuid())
   finalCode String?
-  language  String    @default("javascript")
-  status    String    @default("in_progress")
-  startedAt DateTime  @default(now())
+  language  String            @default("javascript")
+  status    String            @default("in_progress")
+  startedAt DateTime          @default(now())
   endedAt   DateTime?
   duration  Int?
-  updatedAt DateTime  @updatedAt
-
-  roomId String @unique
-  room   Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
-
+  roomId    String            @unique
+  updatedAt DateTime          @updatedAt
+  report    AIReport?
   snapshots CodeSnapshot[]
   events    InterviewEvent[]
   notes     InterviewerNote[]
-  report    AIReport?
+  room      Room              @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@index([status])
   @@map("interviews")
 }
 
 model CodeSnapshot {
-  id        String   @id @default(cuid())
-  code      String
-  timestamp DateTime @default(now())
-
+  id          String    @id @default(cuid())
+  code        String
+  timestamp   DateTime  @default(now())
   interviewId String
   interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
@@ -149,11 +133,10 @@ model CodeSnapshot {
 }
 
 model InterviewEvent {
-  id        String   @id @default(cuid())
-  type      String
-  label     String
-  timestamp DateTime @default(now())
-
+  id          String    @id @default(cuid())
+  type        String
+  label       String
+  timestamp   DateTime  @default(now())
   interviewId String
   interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
@@ -163,24 +146,22 @@ model InterviewEvent {
 }
 
 model ChatMessage {
-  id          String   @id @default(cuid())
-  roomId      String
-  sender      String
-  role        String
-  text        String
-  timestamp   DateTime @default(now())
-
-  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  id        String   @id @default(cuid())
+  roomId    String
+  sender    String
+  role      String
+  text      String
+  timestamp DateTime @default(now())
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@index([roomId, timestamp])
   @@map("chat_messages")
 }
 
 model InterviewerNote {
-  id        String   @id @default(cuid())
-  content   String
-  createdAt DateTime @default(now())
-
+  id          String    @id @default(cuid())
+  content     String
+  createdAt   DateTime  @default(now())
   interviewId String
   interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
@@ -188,104 +169,94 @@ model InterviewerNote {
 }
 
 model AIReport {
-  id               String   @id @default(cuid())
-  correctness      Int
-  codeQuality      Int
-  timeComplexity   String
-  spaceComplexity  String
-  edgeCaseHandling Int
-  overallScore     Int
-  recommendation   String
-  summary          String    @db.Text
-  improvements     String    @db.Text
-  shareToken            String?   @unique
-  shareTokenExpiresAt   DateTime?
-  shareTokenRevokedAt   DateTime?
-  // Interviewer rubric scores (0–10)
-  rubricProblemSolving  Int @default(0)
-  rubricCommunication   Int @default(0)
-  rubricCodeQuality     Int @default(0)
-  rubricEdgeCases       Int @default(0)
-  rubricSpeed           Int @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  interviewId String    @unique
-  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  id                   String    @id @default(cuid())
+  correctness          Int
+  codeQuality          Int
+  timeComplexity       String
+  spaceComplexity      String
+  edgeCaseHandling     Int
+  overallScore         Int
+  recommendation       String
+  summary              String
+  improvements         String
+  createdAt            DateTime  @default(now())
+  interviewId          String    @unique
+  shareToken           String?   @unique
+  rubricProblemSolving Int       @default(0)
+  rubricCommunication  Int       @default(0)
+  rubricCodeQuality    Int       @default(0)
+  rubricEdgeCases      Int       @default(0)
+  rubricSpeed          Int       @default(0)
+  shareTokenExpiresAt  DateTime?
+  shareTokenRevokedAt  DateTime?
+  updatedAt            DateTime  @updatedAt
+  interview            Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 
   @@map("ai_reports")
 }
 
 model HiringPipeline {
-  id          String         @id @default(cuid())
+  id          String             @id @default(cuid())
   name        String
   description String?
-  status      PipelineStatus @default(ACTIVE)
-  targetHires Int            @default(1)
-
+  status      PipelineStatus     @default(ACTIVE)
+  targetHires Int                @default(1)
   createdById String
-  createdBy   User   @relation(fields: [createdById], references: [id])
-
-  templateId String?
-  template   InterviewTemplate? @relation(fields: [templateId], references: [id])
-
-  rooms     Room[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  templateId  String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  createdBy   User               @relation(fields: [createdById], references: [id])
+  template    InterviewTemplate? @relation(fields: [templateId], references: [id])
+  rooms       Room[]
 
   @@index([createdById, status])
   @@map("hiring_pipelines")
 }
 
-enum PipelineStatus {
-  ACTIVE
-  PAUSED
-  CLOSED
-}
-
 model InterviewTemplate {
-  id          String  @id @default(cuid())
-  name        String
-  description String?
-
-  ownerId String
-  owner   User   @relation(fields: [ownerId], references: [id])
-
-  language        String  @default("javascript")
-  durationMinutes Int     @default(60)
-  problemIds      String[] @default([])
-  focusModeEnabled Boolean @default(false)
-
-  rubricWeights Json?     // { problemSolving: 0.3, codeQuality: 0.3, ... }
-  customPrompt  String?   @db.Text
-
-  usageCount Int      @default(0)
-  rooms      Room[]
-  pipelines  HiringPipeline[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id               String           @id @default(cuid())
+  name             String
+  description      String?
+  ownerId          String
+  language         String           @default("javascript")
+  durationMinutes  Int              @default(60)
+  problemIds       String[]         @default([])
+  focusModeEnabled Boolean          @default(false)
+  rubricWeights    Json?
+  customPrompt     String?
+  usageCount       Int              @default(0)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  pipelines        HiringPipeline[]
+  owner            User             @relation(fields: [ownerId], references: [id])
+  rooms            Room[]
 
   @@index([ownerId])
   @@map("interview_templates")
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
-  actorId     String?
-  actorEmail  String?
-  actorRole   String?
-  action      String
-  resource    String
-  resourceId  String
-  metadata    Json?
-  ipAddress   String?
-  userAgent   String?
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  actorId    String?
+  actorEmail String?
+  actorRole  String?
+  action     String
+  resource   String
+  resourceId String
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
 
   @@index([actorId, createdAt])
   @@index([resource, resourceId])
   @@index([action, createdAt])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+enum PipelineStatus {
+  ACTIVE
+  PAUSED
+  CLOSED
 }

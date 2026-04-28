@@ -7,7 +7,7 @@ const path = require("path");
 const Sentry = require("@sentry/node");
 const { RoomStateManager } = require("./roomStateManager.cjs");
 const { logger, createSocketLogger } = require("./logger.cjs");
-const { sanitizeName, sanitizeText } = require("./utils.js");
+const { sanitizeName, sanitizeText } = require("./utils.cjs");
 
 require("dotenv").config({ path: path.resolve(__dirname, "../.env") });
 
@@ -43,10 +43,11 @@ const { saveSnapshot, saveEvent } = require("./interview.service.cjs");
 const redisOptions = {
   url: process.env.REDIS_URL,
   socket: {
-    connectTimeout: 10000,   // 10s — gives cloud Redis time to accept
-    lazyConnect: true,       // Don't auto-connect, we'll handle it manually
+    connectTimeout: 15000,
+    lazyConnect: true,
     reconnectStrategy: (retries) => {
-      const delay = Math.min(retries * 500, 5000);
+      if (retries > 10) return false; // Stop reconnecting after 10 attempts
+      const delay = Math.min(retries * 1000, 10000); // Exponential backoff, max 10s
       logger.warn({ retries, delay }, "[redis] reconnecting");
       return delay;
     },
@@ -94,6 +95,11 @@ const io = new Server(httpServer, {
     methods: ["GET", "POST"],
     credentials: true,
   },
+  transports: ["websocket", "polling"],
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  upgradeTimeout: 30000,
+  allowEIO3: false,
 });
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
@@ -102,17 +108,37 @@ const COOKIE_NAME = "codroom-token";
 let roomState;
 const snapshotTimers = new Map();
 
+// Periodic cleanup of orphaned snapshot timers
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, timer] of snapshotTimers.entries()) {
+    // Check if the timer is older than 5 minutes (stale)
+    if (timer._idleStart && (now - timer._idleStart) > 300000) {
+      clearTimeout(timer);
+      snapshotTimers.delete(key);
+      logger.warn({ timerKey: key }, "cleaned up stale snapshot timer");
+    }
+  }
+}, 60000); // Run cleanup every minute
+
 // ─── Per-socket rate limiter ──────────────────────────────────────────────────
 const rateBuckets = new Map(); // in-memory fallback only
 
 const RATE_LIMITS = {
-  "code-change":      { capacity: 30, refillRate: 20 },
-  "send-message":     { capacity: 10, refillRate:  2 },
-  "timeline-event":   { capacity: 20, refillRate: 10 },
-  "join-room":        { capacity:  3, refillRate:  1 },
-  "language-change":  { capacity:  5, refillRate:  1 },
-  "whiteboard-draw":  { capacity: 60, refillRate: 40 },
-  "whiteboard-clear": { capacity:  5, refillRate:  1 },
+  "code-change":      { capacity: 20, refillRate: 10 }, // Reduced from 50/30
+  "send-message":     { capacity: 15, refillRate:  3 },
+  "timeline-event":   { capacity: 30, refillRate: 15 },
+  "join-room":        { capacity:  5, refillRate:  2 },
+  "language-change":  { capacity: 10, refillRate:  2 },
+  "whiteboard-draw":  { capacity: 50, refillRate: 30 }, // Reduced from 80/50
+  "whiteboard-clear": { capacity: 10, refillRate:  2 },
+  "timer-set":        { capacity:  5, refillRate:  1 },
+  "timer-extend":     { capacity: 10, refillRate:  2 },
+  "timer-clear":      { capacity:  5, refillRate:  1 },
+  "set-focus-mode":   { capacity:  5, refillRate:  1 },
+  "set-interview-id": { capacity:  3, refillRate:  1 },
+  "unlock-candidate": { capacity: 10, refillRate:  2 },
+  "cursor-move":      { capacity: 30, refillRate: 20 }, // New rate limit for cursor events
 };
 
 // Lua script: atomic token-bucket refill + consume
@@ -212,7 +238,8 @@ io.use(async (socket, next) => {
     socket.data.user = payload;
     socket.data.isAuthenticated = true;
     next();
-  } catch {
+  } catch (err) {
+    console.warn(`[socket] Auth error: ${err.message}`);
     socket.data.user = null;
     socket.data.isAuthenticated = false;
     next();
@@ -258,9 +285,21 @@ io.on("connection", (socket) => {
   const slog = createSocketLogger(socket);
   slog.debug({ auth: socket.data.isAuthenticated }, "socket connected");
 
+  // Join authenticated users to dashboard room for room count updates
+  if (socket.data.isAuthenticated) {
+    socket.join("dashboard");
+    slog.debug("joined dashboard room for count updates");
+  }
+
   socket.on("join-room", async ({ roomId, userName, role: clientRole }) => {
-    if (!roomId || !userName) return;
-    if (!await isAllowed(socket.id, "join-room")) return;
+    if (!roomId || !userName) {
+      socket.emit("join-error", { message: "Missing roomId or userName" });
+      return;
+    }
+    if (!await isAllowed(socket.id, "join-room")) {
+      socket.emit("join-error", { message: "Rate limit exceeded" });
+      return;
+    }
 
     // Sanitize user input
     userName = sanitizeName(userName);
@@ -280,13 +319,22 @@ io.on("connection", (socket) => {
       } else {
         const ticket = socket.handshake.auth?.roomTicket;
         if (!ticket) { 
-          console.error("No room ticket for authenticated guest");
-          socket.emit("join-error", { message: "No room ticket" }); return; }
+          console.error(`[join-room] No room ticket for authenticated guest. User: ${socket.data.user.userId}, Room: ${roomId}`);
+          socket.emit("join-error", { message: "No room ticket" }); 
+          return; 
+        }
         try {
           const { payload } = await jwtVerify(ticket, SECRET);
-          if (payload.roomId !== roomId || payload.type !== "room-session") throw new Error();
+          if (payload.roomId !== roomId) {
+            console.error(`[join-room] Room ID mismatch for authenticated guest. Expected: ${roomId}, Got: ${payload.roomId}`);
+            throw new Error("Room ID mismatch");
+          }
+          if (payload.type !== "room-session") {
+            console.error(`[join-room] Invalid ticket type for authenticated guest. Expected: room-session, Got: ${payload.type}`);
+            throw new Error("Invalid ticket type");
+          }
         } catch(err) {
-          console.error("Invalid room ticket for authenticated guest", err.message);
+          console.error(`[join-room] Invalid room ticket for authenticated guest: ${err.message}. User: ${socket.data.user.userId}`);
           socket.emit("join-error", { message: "Invalid room ticket" });
           return;
         }
@@ -294,14 +342,23 @@ io.on("connection", (socket) => {
     } else {
       const ticket = socket.handshake.auth?.roomTicket;
       if (!ticket) { 
-        console.error("No room ticket for unauthenticated user");
-        socket.emit("join-error", { message: "No room ticket" }); return; }
+        console.error(`[join-room] No room ticket for unauthenticated user. Socket: ${socket.id}, Room: ${roomId}`);
+        socket.emit("join-error", { message: "No room ticket provided" }); 
+        return; 
+      }
       try {
         const { payload } = await jwtVerify(ticket, SECRET);
-        if (payload.roomId !== roomId || payload.type !== "room-session") throw new Error("Invalid payload type or roomId mismatch");
+        if (payload.roomId !== roomId) {
+          console.error(`[join-room] Room ID mismatch. Expected: ${roomId}, Got: ${payload.roomId}`);
+          throw new Error("Room ID mismatch");
+        }
+        if (payload.type !== "room-session") {
+          console.error(`[join-room] Invalid ticket type. Expected: room-session, Got: ${payload.type}`);
+          throw new Error("Invalid ticket type");
+        }
         if (payload.candidateName) userName = sanitizeName(payload.candidateName);
       } catch(err) {
-        console.error("Invalid room ticket for unauthenticated user:", err.message);
+        console.error(`[join-room] Invalid room ticket for unauthenticated user: ${err.message}. Socket: ${socket.id}`);
         socket.emit("join-error", { message: "Invalid room ticket" });
         return;
       }
@@ -313,23 +370,39 @@ io.on("connection", (socket) => {
     socket.join(roomId);
 
     // Init room in Redis if it doesn't exist yet
-    let room = await roomState.getRoomState(roomId);
-    if (!room) {
-      const dbData = await seedRoomFromDB(roomId);
-      if (!dbData) {
-        console.error("Room not found in seedRoomFromDB for roomId:", roomId);
-        socket.emit("join-error", { message: "Room not found" });
-        return;
-      }
-      await roomState.initRoom(roomId, {
-        code: dbData.lastCode || "",
-        language: dbData.language || "javascript",
-        users: [],
-        messages: dbData.persistedMessages || [],
-        events: [],
-        interviewId: dbData.interviewId || null,
-      });
+    let room;
+    try {
       room = await roomState.getRoomState(roomId);
+      if (!room) {
+        const dbData = await seedRoomFromDB(roomId);
+        if (!dbData) {
+          console.error("Room not found in seedRoomFromDB for roomId:", roomId);
+          socket.emit("join-error", { message: "Room not found" });
+          return;
+        }
+        
+        // Clear any existing snapshot timer for this room before initializing
+        const timerKey = `${roomId}-snapshot`;
+        if (snapshotTimers.has(timerKey)) {
+          clearTimeout(snapshotTimers.get(timerKey));
+          snapshotTimers.delete(timerKey);
+          slog.debug({ roomId }, "cleared stale snapshot timer on room init");
+        }
+        
+        await roomState.initRoom(roomId, {
+          code: dbData.lastCode || "",
+          language: dbData.language || "javascript",
+          users: [],
+          messages: dbData.persistedMessages || [],
+          events: [],
+          interviewId: dbData.interviewId || null,
+        });
+        room = await roomState.getRoomState(roomId);
+      }
+    } catch (error) {
+      console.error("Error initializing room state:", error.message);
+      socket.emit("join-error", { message: "Room initialization failed" });
+      return;
     }
 
     const users = await roomState.upsertUser(roomId, {
@@ -339,31 +412,34 @@ io.on("connection", (socket) => {
     slog.info({ roomId, userName, role: authoritativeRole }, "user joined room");
 
     if (authoritativeRole === "candidate") {
-      updateRoomOnCandidateJoin(roomId, userName).catch((err) =>
-        slog.error({ err, roomId }, "DB update error on candidate join")
-      );
-      // Notify interviewer via internal API (fire-and-forget)
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-      fetch(`${appUrl}/api/internal/notify`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-internal-secret": process.env.INTERNAL_SECRET || "",
-        },
-        body: JSON.stringify({ type: "candidate-joined", roomId, candidateName: userName }),
-      }).catch((err) => slog.warn({ err, roomId }, "candidate-joined notify failed"));
+      updateRoomOnCandidateJoin(roomId, userName)
+        .then(({ wasFirstJoin }) => {
+          if (wasFirstJoin) {
+            // Notify interviewer via internal API (fire-and-forget)
+            const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+            fetch(`${appUrl}/api/internal/notify`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "x-internal-secret": process.env.INTERNAL_SECRET || "",
+              },
+              body: JSON.stringify({ type: "candidate-joined", roomId, candidateName: userName }),
+            }).catch((err) => slog.warn({ err, roomId }, "candidate-joined notify failed"));
+          }
+        })
+        .catch((err) => slog.error({ err, roomId }, "DB update error on candidate join"));
     }
 
     socket.emit("room-state", {
-      code: room.code,
-      language: room.language,
+      code: room?.code || "",
+      language: room?.language || "javascript",
       users,
-      messages: room.messages.slice(-200),
-      interviewId: room.interviewId,
-      events: room.events || [],
-      focusMode: room.focusMode || false,
-      timerEndsAt: room.timerEndsAt || null,
-      isEmptyRoom: users.length === 1 && !room.code && !room.interviewId,
+      messages: room?.messages?.slice(-200) || [],
+      interviewId: room?.interviewId || null,
+      events: room?.events || [],
+      focusMode: room?.focusMode || false,
+      timerEndsAt: room?.timerEndsAt || null,
+      isEmptyRoom: users.length === 1 && !room?.code && !room?.interviewId,
     });
 
     socket.to(roomId).emit("user-joined", {
@@ -371,7 +447,8 @@ io.on("connection", (socket) => {
       users,
     });
 
-    io.emit("room-count-update", { roomId, count: users.length });
+    // Only broadcast room count updates to authenticated dashboard users
+    socket.broadcast.to("dashboard").emit("room-count-update", { roomId, count: users.length });
 
     const joinMsg = {
       id: `${Date.now()}-${socket.id}`,
@@ -405,6 +482,7 @@ io.on("connection", (socket) => {
   socket.on("timer-set", async ({ roomId: rid, durationMinutes }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "timer-set")) return;
     const endsAt = new Date(Date.now() + durationMinutes * 60 * 1000).toISOString();
     await roomState.setTimer(roomId, endsAt);
     io.to(roomId).emit("timer-sync", { endsAt });
@@ -414,6 +492,7 @@ io.on("connection", (socket) => {
   socket.on("timer-extend", async ({ roomId: rid, addMinutes }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "timer-extend")) return;
     const current = await roomState.getTimerEndsAt(roomId);
     const base = current && new Date(current) > new Date() ? new Date(current) : new Date();
     const endsAt = new Date(base.getTime() + addMinutes * 60 * 1000).toISOString();
@@ -425,6 +504,7 @@ io.on("connection", (socket) => {
   socket.on("timer-clear", async ({ roomId: rid }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "timer-clear")) return;
     await roomState.setTimer(roomId, null);
     io.to(roomId).emit("timer-sync", { endsAt: null });
   });
@@ -432,14 +512,16 @@ io.on("connection", (socket) => {
   socket.on("set-focus-mode", async ({ roomId: rid, enabled }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "set-focus-mode")) return;
     await roomState.setFocusMode(roomId, !!enabled);
     io.to(roomId).emit("focus-mode-changed", { enabled: !!enabled });
     slog.info({ roomId, enabled: !!enabled }, "focus mode changed");
   });
 
-  socket.on("unlock-candidate", ({ roomId: rid }) => {
+  socket.on("unlock-candidate", async ({ roomId: rid }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "unlock-candidate")) return;
     io.to(roomId).emit("candidate-unlocked");
     slog.info({ roomId }, "candidate unlocked");
   });
@@ -447,6 +529,7 @@ io.on("connection", (socket) => {
   socket.on("set-interview-id", async ({ roomId: rid, interviewId }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || socket.data.role !== "interviewer") return;
+    if (!await isAllowed(socket.id, "set-interview-id")) return;
     await roomState.setInterviewId(roomId, interviewId);
     slog.info({ roomId, interviewId }, "interview started");
     io.to(roomId).emit("interview-started", { interviewId });
@@ -455,16 +538,11 @@ io.on("connection", (socket) => {
   socket.on("share-peer-id", async ({ roomId: rid, peerId }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId) return;
-    const room = await roomState.getRoomState(roomId);
-    if (room) {
-      const users = room.users;
-      const user = users.find((u) => u.id === socket.id);
-      if (user) {
-        user.peerId = peerId;
-        await roomState.updateUsers(roomId, users);
-      }
+    
+    const { found } = await roomState.updatePeerId(roomId, socket.id, peerId);
+    if (found) {
+      io.to(roomId).emit("peer-id-received", { peerId, socketId: socket.id });
     }
-    io.to(roomId).emit("peer-id-received", { peerId, socketId: socket.id });
   });
 
   socket.on("code-change", async ({ roomId: rid, code }) => {
@@ -477,7 +555,11 @@ io.on("connection", (socket) => {
 
     if (room.interviewId) {
       const timerKey = `${roomId}-snapshot`;
-      if (snapshotTimers.has(timerKey)) clearTimeout(snapshotTimers.get(timerKey));
+      // Clear any existing timer to prevent multiple timers for the same room
+      if (snapshotTimers.has(timerKey)) {
+        clearTimeout(snapshotTimers.get(timerKey));
+      }
+      
       snapshotTimers.set(
         timerKey,
         setTimeout(() => {
@@ -507,9 +589,11 @@ io.on("connection", (socket) => {
   socket.on("code-output", async ({ roomId: rid, output }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || !socket.data.isAuthenticated) return;
+    // Only interviewers can broadcast code execution results
+    if (socket.data.role !== "interviewer") return;
     const room = await roomState.getRoomState(roomId);
     if (!room) return;
-    if (room.interviewId && socket.data.role === "interviewer") {
+    if (room.interviewId) {
       const event = {
         type: output.status === "error" ? "run_fail" : "run_pass",
         timestamp: new Date().toISOString(),
@@ -524,6 +608,8 @@ io.on("connection", (socket) => {
   socket.on("timeline-event", async ({ roomId: rid, event }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId || !socket.data.isAuthenticated) return;
+    // Only interviewers can create timeline events
+    if (socket.data.role !== "interviewer") return;
     if (!await isAllowed(socket.id, "timeline-event")) return;
     const room = await roomState.getRoomState(roomId);
     if (!room || !room.interviewId) return;
@@ -555,6 +641,8 @@ io.on("connection", (socket) => {
   socket.on("cursor-move", ({ roomId: rid, cursor }) => {
     const roomId = boundRoom(socket, rid);
     if (!roomId) return;
+    // Rate limit cursor movements to prevent flooding
+    if (!isAllowed(socket.id, "cursor-move")) return;
     socket.to(roomId).emit("remote-cursor", {
       cursor,
       userId: socket.id,
@@ -612,7 +700,8 @@ io.on("connection", (socket) => {
     if (!user) return;
 
     io.to(roomId).emit("user-left", { user, users });
-    io.emit("room-count-update", { roomId, count: users.length });
+    // Only broadcast room count updates to authenticated dashboard users
+    socket.broadcast.to("dashboard").emit("room-count-update", { roomId, count: users.length });
 
     const leaveMsg = {
       id: `${Date.now()}-${socket.id}`,
@@ -690,19 +779,37 @@ start().catch((err) => {
 
 async function shutdown(signal) {
   logger.info({ signal }, "shutting down");
+  
+  // Close HTTP server first
   await new Promise((resolve) => httpServer.close(resolve));
-  io.disconnectSockets(true);
+  
+  // Disconnect all sockets gracefully
+  await new Promise((resolve) => {
+    io.disconnectSockets(true);
+    // Give sockets time to disconnect before closing Redis
+    setTimeout(resolve, 100);
+  });
+  
+  // Clear all timers
   for (const [key, timer] of snapshotTimers) {
     clearTimeout(timer);
     snapshotTimers.delete(key);
   }
   
-  // Gracefully close Redis connections
+  // Close Redis connections only if they're still open
+  // Socket.IO adapter may have already closed them
   try {
-    if (pubClient.isReady) await pubClient.quit();
-    if (subClient.isReady) await subClient.quit();
+    if (pubClient?.isOpen) {
+      await pubClient.quit();
+    }
+    if (subClient?.isOpen) {
+      await subClient.quit();
+    }
   } catch (err) {
-    logger.warn({ err }, "Error closing Redis connections");
+    // Ignore "client is closed" errors during shutdown
+    if (err.message !== "The client is closed") {
+      logger.warn({ err }, "Error closing Redis connections");
+    }
   }
   
   await prisma.$disconnect();

@@ -9,13 +9,13 @@ const fs = require("fs");
 const path = require("path");
 
 const socketSrc = fs.readFileSync(
-  path.resolve(__dirname, "../../server/socket.js"),
+  path.resolve(__dirname, "../../server/socket.cjs"),
   "utf8"
 );
 
 // Extract RATE_LIMITS object from source so tests always reflect production values
 const match = socketSrc.match(/const RATE_LIMITS\s*=\s*(\{[\s\S]*?\});/);
-if (!match) throw new Error("Could not locate RATE_LIMITS in server/socket.js");
+if (!match) throw new Error("Could not locate RATE_LIMITS in server/socket.cjs");
 const RATE_LIMITS = eval(`(${match[1]})`);
 
 function makeRateLimiter() {

@@ -76,7 +76,27 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
-    const socket = io(socketUrl, { transports: ["websocket"], reconnectionAttempts: 5 });
+    
+    // Get auth token from cookie for Socket.IO authentication
+    const getAuthToken = () => {
+      const cookies = document.cookie.split(';');
+      for (let cookie of cookies) {
+        const [name, value] = cookie.trim().split('=');
+        if (name === 'codroom-token') {
+          return value;
+        }
+      }
+      return null;
+    };
+    
+    const authToken = getAuthToken();
+    const socket = io(socketUrl, { 
+      transports: ["websocket"], 
+      reconnectionAttempts: 5,
+      auth: {
+        token: authToken
+      }
+    });
     socketRef.current = socket;
 
     socket.on("connect", () => {

@@ -40,7 +40,8 @@ const globalForPrisma = globalThis;
 
 const prisma = globalForPrisma.prisma ?? makePrismaClient();
 
-if (process.env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+// Always preserve singleton in globalThis to prevent multiple instances
+globalForPrisma.prisma = prisma;
 
 prisma.$connect().catch((e) => {
   console.error("❌ Database connection failed:", e.message);

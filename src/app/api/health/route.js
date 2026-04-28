@@ -5,24 +5,39 @@ import { groqBreaker, dockerBreaker } from "@/lib/circuitBreaker";
 
 export const dynamic = "force-dynamic";
 
-let redisHealthClient = null;
-
 async function checkRedisHealth() {
   const url = process.env.REDIS_URL;
   if (!url) return { healthy: true, note: "not configured (single-instance mode)" };
+  
+  let client = null;
   try {
-    if (!redisHealthClient) {
-      const { createClient } = await import("redis");
-      redisHealthClient = createClient({ url, socket: { connectTimeout: 3000 } });
-      redisHealthClient.on("error", () => {});
-      await redisHealthClient.connect();
-    }
+    const { createClient } = await import("redis");
+    client = createClient({ 
+      url, 
+      socket: { 
+        connectTimeout: 3000,
+        lazyConnect: true // Don't auto-connect
+      } 
+    });
+    client.on("error", () => {}); // Suppress error events
+    
+    await client.connect();
     const start = Date.now();
-    await redisHealthClient.ping();
-    return { healthy: true, latencyMs: Date.now() - start };
+    await client.ping();
+    const latencyMs = Date.now() - start;
+    
+    return { healthy: true, latencyMs };
   } catch (error) {
-    redisHealthClient = null; // reset so next call retries
     return { healthy: false, error: error.message };
+  } finally {
+    // Always disconnect the client to prevent leaks
+    if (client) {
+      try {
+        await client.disconnect();
+      } catch {
+        // Ignore disconnect errors
+      }
+    }
   }
 }
 

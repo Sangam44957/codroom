@@ -11,11 +11,32 @@
     "start:clean": "npm run kill:ports && npm run dev:all",
     "build": "prisma generate && next build",
     "build:all": "prisma generate && next build",
+    "build:docker": "docker build -t codroom-app -f Dockerfile.prod . && docker build -t codroom-socket -f Dockerfile.socket .",
     "start": "next start",
-    "start:all": "concurrently -k -r -n NEXT,SOCKET -c cyan,yellow \"npm run start\" \"npm run dev:socket\"",
-    "lint": "eslint src",
+    "start:socket": "node server/socket.cjs",
+    "start:all": "concurrently -k -r -n NEXT,SOCKET -c cyan,yellow \"npm run start\" \"npm run start:socket\"",
+    "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "type-check": "tsc --noEmit",
     "test": "jest",
-    "seed": "node prisma/seed.js"
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:e2e": "jest --testPathPattern=e2e",
+    "seed": "node prisma/seed.js",
+    "db:migrate": "prisma migrate deploy",
+    "db:generate": "prisma generate",
+    "db:studio": "prisma studio",
+    "deploy:staging": "./scripts/deploy.sh staging",
+    "deploy:production": "./scripts/deploy.sh production",
+    "monitoring:up": "docker compose -f docker-compose.monitoring.yml up -d || docker-compose -f docker-compose.monitoring.yml up -d",
+    "monitoring:down": "docker compose -f docker-compose.monitoring.yml down || docker-compose -f docker-compose.monitoring.yml down",
+    "security:scan": "npm audit && docker run --rm -v $(pwd):/app securecodewarrior/docker-security-scan /app",
+    "performance:test": "k6 run scripts/load-test.js",
+    "backup:db": "pg_dump $DATABASE_URL | gzip > backup-$(date +%Y%m%d).sql.gz",
+    "health:check": "curl -f $NEXT_PUBLIC_APP_URL/api/health"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.cjs"
   },
   "jest": {
     "testEnvironment": "node",
@@ -29,7 +50,7 @@
       "^.+\\.(js|jsx)$": "babel-jest"
     },
     "transformIgnorePatterns": [
-      "node_modules/(?!(jose|next)/)"
+      "node_modules/(?!(jose|next|@babel/runtime)/)"
     ],
     "setupFiles": [
       "<rootDir>/src/__tests__/setup.js"
@@ -48,7 +69,7 @@
     "jose": "^6.2.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^0.577.0",
-    "next": "16.1.6",
+    "next": "16.2.4",
     "peerjs": "^1.5.5",
     "pino": "^10.3.1",
     "react": "19.2.3",
@@ -67,7 +88,7 @@
     "@tailwindcss/postcss": "^4",
     "concurrently": "^9.2.1",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint-config-next": "16.2.4",
     "jest": "^30.3.0",
     "jest-environment-node": "^30.3.0",
     "kill-port": "^2.0.1",

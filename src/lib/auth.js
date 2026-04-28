@@ -2,13 +2,14 @@ import "@/lib/validateEnv";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { cookies } from "next/headers";
+import { SESSION_COOKIE_OPTIONS, clearCookie } from "@/lib/secureCookies";
 
 const SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 const COOKIE_NAME = "codroom-token";
 
 // Hash a password before storing in database
 export async function hashPassword(password) {
-  return await bcrypt.hash(password, 12);
+  return await bcrypt.hash(password, 10);
 }
 
 // Compare entered password with stored hash
@@ -37,19 +38,17 @@ export async function verifyToken(token) {
 // Set the auth cookie after login/register
 export async function setAuthCookie(token) {
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    maxAge: 60 * 60 * 24 * 7, // 7 days
-    path: "/",
-  });
+  cookieStore.set(COOKIE_NAME, token, SESSION_COOKIE_OPTIONS);
 }
 
 // Remove the auth cookie on logout
 export async function removeAuthCookie() {
   const cookieStore = await cookies();
-  cookieStore.delete(COOKIE_NAME);
+  cookieStore.set(COOKIE_NAME, '', {
+    ...SESSION_COOKIE_OPTIONS,
+    maxAge: 0,
+    expires: new Date(0)
+  });
 }
 
 // Get current logged in user from cookie
@@ -70,7 +69,11 @@ export async function getCurrentUser() {
       select: { id: true },
     });
     if (!user) {
-      cookieStore.delete(COOKIE_NAME);
+      cookieStore.set(COOKIE_NAME, '', {
+        ...SESSION_COOKIE_OPTIONS,
+        maxAge: 0,
+        expires: new Date(0)
+      });
       return null;
     }
   } catch {

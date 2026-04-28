@@ -16,18 +16,24 @@ export const POST = withAuthz(async (request) => {
   if (csrf) return csrf;
 
   const user = await requireAuth();
-  const body = await request.json();
-  if (!body.title?.trim()) {
-    return NextResponse.json({ error: "Room title is required" }, { status: 400 });
+  
+  try {
+    const body = await request.json();
+    if (!body.title?.trim()) {
+      return NextResponse.json({ error: "Room title is required" }, { status: 400 });
+    }
+    const room = await createNewRoom(body, user.userId);
+    audit({
+      actorId: user.userId, actorEmail: user.email, actorRole: "interviewer",
+      action: AuditActions.ROOM_CREATED, resource: "room", resourceId: room.id,
+      metadata: { title: body.title, language: body.language },
+      request,
+    });
+    return NextResponse.json({ message: "Room created", room }, { status: 201 });
+  } catch (error) {
+    console.error("[rooms] POST error:", error.message);
+    return NextResponse.json({ error: "Failed to create room" }, { status: 500 });
   }
-  const room = await createNewRoom(body, user.userId);
-  audit({
-    actorId: user.userId, actorEmail: user.email, actorRole: "interviewer",
-    action: AuditActions.ROOM_CREATED, resource: "room", resourceId: room.id,
-    metadata: { title: body.title, language: body.language },
-    request,
-  });
-  return NextResponse.json({ message: "Room created", room }, { status: 201 });
 });
 
 export const DELETE = withAuthz(async (request) => {

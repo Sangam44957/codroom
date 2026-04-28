@@ -14,7 +14,7 @@ jest.mock("next/headers", () => ({
 }));
 
 // ── Mock validateEnv so it doesn't throw on missing prod vars ─────────────────
-jest.mock("@/lib/validateEnv", () => {});
+jest.mock("@/lib/env", () => ({ validateEnv: jest.fn() }));
 
 // ── Mock the service layer — tests control what the DB "returns" ──────────────
 jest.mock("@/services/room.service", () => ({
@@ -23,7 +23,11 @@ jest.mock("@/services/room.service", () => ({
 }));
 
 const { validateJoinToken } = require("@/services/room.service");
-const { POST: joinRoom } = require("@/app/api/rooms/[roomId]/join/route");
+let joinRoom;
+beforeAll(async () => {
+  const module = await import("@/app/api/rooms/[roomId]/join/route");
+  joinRoom = module.POST;
+});
 
 // ── Minimal Request factory ───────────────────────────────────────────────────
 function makeRequest(body) {

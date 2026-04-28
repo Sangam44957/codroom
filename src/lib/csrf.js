@@ -1,5 +1,5 @@
 /**
- * Lightweight CSRF protection via Origin/Referer header validation.
+ * Enhanced CSRF protection via Origin/Referer header validation and SameSite cookies.
  * Works for same-site fetch calls (the browser always sends Origin on cross-origin
  * requests, and same-origin requests are safe by definition).
  *
@@ -16,14 +16,29 @@ export function checkCsrf(request) {
 
   const origin = request.headers.get("origin");
   const referer = request.headers.get("referer");
+  const contentType = request.headers.get("content-type");
+
+  // Require explicit Origin header for state-changing requests with JSON content
+  if (request.method !== 'GET' && contentType?.includes('application/json')) {
+    if (!origin) {
+      return NextResponse.json({ error: "Missing Origin header" }, { status: 403 });
+    }
+  }
 
   const source = origin || (referer ? new URL(referer).origin : null);
 
-  // Same-origin requests from browsers don't always send Origin header.
-  // Only reject when we have a source that doesn't match.
+  // Reject requests with mismatched origins
   if (source && source !== allowedOrigin) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    return NextResponse.json({ error: "Forbidden - Invalid origin" }, { status: 403 });
   }
 
   return null;
 }
+
+// Enhanced cookie options for CSRF protection
+export const SECURE_COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'strict',
+  path: '/'
+};

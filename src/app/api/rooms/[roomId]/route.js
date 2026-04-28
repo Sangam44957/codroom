@@ -27,11 +27,14 @@ export const GET = withAuthz(async (request, { params }) => {
     );
   }
 
+  // Verify the JWT room ticket
   try {
     const { payload } = await jwtVerify(ticketCookie, SECRET);
-    if (payload.roomId !== roomId || payload.type !== "room-session") throw new Error();
+    if (payload.roomId !== roomId || payload.type !== "room-session") {
+      return NextResponse.json({ error: "Invalid room session" }, { status: 403 });
+    }
   } catch {
-    return NextResponse.json({ error: "Invalid or expired room ticket" }, { status: 403 });
+    return NextResponse.json({ error: "Invalid room session" }, { status: 403 });
   }
 
   const sanitizeProblem = (p) =>

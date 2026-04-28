@@ -1,0 +1,12 @@
+FROM node:20-alpine
+
+# Install tsx for TypeScript execution
+RUN npm install -g tsx
+
+# Create non-root user
+RUN adduser -D -s /bin/sh sandbox
+
+WORKDIR /sandbox
+USER sandbox
+
+CMD ["sh"]

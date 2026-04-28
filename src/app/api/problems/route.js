@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/auth";
+import { checkCsrf } from "@/lib/csrf";
 import { listProblems, createNewProblem, removeProblem } from "@/services/problem.service";
 import { audit, AuditActions } from "@/lib/audit";
 
@@ -29,6 +30,9 @@ export async function GET(request) {
 }
 
 export async function POST(request) {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
+
   try {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -49,6 +53,9 @@ export async function POST(request) {
 }
 
 export async function DELETE(request) {
+  const csrf = checkCsrf(request);
+  if (csrf) return csrf;
+
   try {
     const user = await getCurrentUser();
     if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

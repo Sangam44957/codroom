@@ -7,7 +7,7 @@ import { toast } from "sonner";
 const MAX_MESSAGES = 200;
 const MAX_TIMELINE_EVENTS = 500; // Cap timeline events to prevent memory growth
 
-export default function useSocket(roomId, userName, role, token) {
+export default function useSocket(roomId, userName, role, token, roomTicket) {
   const socketRef = useRef(null);
   const hasConnectedOnceRef = useRef(false);
   const reconnectDetectedRef = useRef(false);
@@ -44,20 +44,15 @@ export default function useSocket(roomId, userName, role, token) {
     if (!roomId || !userNameRef.current) return;
 
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || "http://localhost:3001";
-    const ticketCookie = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith(`room-ticket-${roomId}=`));
-    const roomTicket = ticketCookie
-      ? decodeURIComponent(ticketCookie.slice(`room-ticket-${roomId}=`.length))
-      : undefined;
 
     const socket = io(socketUrl, {
-      transports: ["websocket"],
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 30000,
+      transports: ["websocket", "polling"],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
       randomizationFactor: 0.5,
-      timeout: 10000,
+      timeout: 20000,
+      forceNew: true,
       auth: { roomTicket, token },
     });
 
@@ -92,7 +87,13 @@ export default function useSocket(roomId, userName, role, token) {
     socket.on("connect_error", (err) => {
       // Only show the toast on the first error — socket.io will keep retrying silently
       if (!hasConnectedOnceRef.current) {
-        toast.error("Cannot reach server — retrying…", { id: "socket-connect-error", duration: Infinity });
+        console.error("[socket] connect_error details:", {
+          message: err.message,
+          description: err.description,
+          context: err.context,
+          type: err.type
+        });
+        toast.error(`Connection failed: ${err.message}`, { id: "socket-connect-error", duration: 10000 });
       }
       console.warn("[socket] connect_error:", err.message);
     });
@@ -233,7 +234,7 @@ export default function useSocket(roomId, userName, role, token) {
       hasConnectedOnceRef.current = false;
       reconnectDetectedRef.current = false;
     };
-  }, [roomId]); // Only roomId triggers reconnect
+  }, [roomId, roomTicket]); // roomId and roomTicket trigger reconnect
 
   // ─── Emit helpers ────────────────────────────────────────────
 

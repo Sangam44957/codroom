@@ -161,11 +161,11 @@ export class CircuitBreaker {
 // Uses Redis if UPSTASH_REDIS_REST_URL is set, otherwise falls back to per-process state.
 
 export const groqBreaker = new CircuitBreaker("groq-ai", {
-  failureThreshold: 3,
-  resetTimeoutMs:   60_000,
+  failureThreshold: 5,
+  resetTimeoutMs:   120_000,
 });
 
 export const dockerBreaker = new CircuitBreaker("code-execution", {
-  failureThreshold: 5,
-  resetTimeoutMs:   30_000,
+  failureThreshold: 10,
+  resetTimeoutMs:   60_000,
 });

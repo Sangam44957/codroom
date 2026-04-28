@@ -14,7 +14,7 @@ export const metadata = {
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
-      <body className={`${geist.className} ${inter.variable} antialiased`}>
+      <body className={`${geist.className} ${inter.variable} antialiased`} suppressHydrationWarning={true}>
         <ErrorBoundary>
           {children}
         </ErrorBoundary>

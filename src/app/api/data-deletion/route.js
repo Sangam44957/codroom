@@ -36,62 +36,28 @@ export async function POST(request) {
 
   try {
     await prisma.$transaction(async (tx) => {
-      // 1. AI reports
-      await tx.aIReport.deleteMany({
-        where: { interview: { room: { createdById: user.userId } } },
-      });
-
-      // 2. Interviewer notes
-      await tx.interviewerNote.deleteMany({
-        where: { interview: { room: { createdById: user.userId } } },
-      });
-
-      // 3. Code snapshots + interview events
-      await tx.codeSnapshot.deleteMany({
-        where: { interview: { room: { createdById: user.userId } } },
-      });
-      await tx.interviewEvent.deleteMany({
-        where: { interview: { room: { createdById: user.userId } } },
-      });
-
-      // 4. Interviews
-      await tx.interview.deleteMany({
-        where: { room: { createdById: user.userId } },
-      });
-
-      // 5. Chat messages
-      await tx.chatMessage.deleteMany({
-        where: { room: { createdById: user.userId } },
-      });
-
-      // 6. Room problems + legacy direct problem FK (null it out)
-      await tx.roomProblem.deleteMany({
-        where: { room: { createdById: user.userId } },
-      });
+      // 1. Clear legacy problemId FK (not cascaded) before deleting rooms
       await tx.room.updateMany({
         where: { createdById: user.userId },
         data: { problemId: null },
       });
 
-      // 7. Rooms
+      // 2. Delete rooms (cascades to Interview → {CodeSnapshot, InterviewEvent, InterviewerNote, AIReport})
+      //    Also cascades to ChatMessage and RoomProblem
       await tx.room.deleteMany({ where: { createdById: user.userId } });
 
-      // 8. Pipelines
+      // 3. Delete user-owned entities (no cascades from User, so manual deletion needed)
       await tx.hiringPipeline.deleteMany({ where: { createdById: user.userId } });
-
-      // 9. Templates
       await tx.interviewTemplate.deleteMany({ where: { ownerId: user.userId } });
-
-      // 10. Problems
       await tx.problem.deleteMany({ where: { createdById: user.userId } });
 
-      // 11. Anonymize audit logs — keep for compliance, strip PII
+      // 4. Anonymize audit logs — keep for compliance, strip PII
       await tx.auditLog.updateMany({
         where: { actorId: user.userId },
         data: { actorEmail: "[deleted]", ipAddress: null, userAgent: null },
       });
 
-      // 12. Delete user
+      // 5. Delete user (User → Room is RESTRICT, but rooms are already deleted)
       await tx.user.delete({ where: { id: user.userId } });
     });
 

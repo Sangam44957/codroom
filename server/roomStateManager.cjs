@@ -78,6 +78,28 @@ const REMOVE_USER_SCRIPT = `
   return cjson.encode({ removed = removed, users = next })
 `;
 
+// Atomically update a user's peerId by socketId
+const UPDATE_PEER_ID_SCRIPT = `
+  local key = KEYS[1]
+  local sid = ARGV[1]
+  local peerId = ARGV[2]
+  local raw = redis.call('HGET', key, 'users')
+  local users = cjson.decode(raw or '[]')
+  local found = false
+  for i, u in ipairs(users) do
+    if u.id == sid then
+      u.peerId = peerId
+      users[i] = u
+      found = true
+      break
+    end
+  end
+  if found then
+    redis.call('HSET', key, 'users', cjson.encode(users))
+  end
+  return cjson.encode({ found = found, users = users })
+`;
+
 class RoomStateManager {
   constructor(redisClient) {
     this.redis = redisClient;
@@ -87,6 +109,7 @@ class RoomStateManager {
     if (this.fallbackMode) {
       console.warn("[RoomStateManager] Running in fallback mode without Redis");
       this.memoryRooms = new Map(); // In-memory room storage
+      this.roomLocks = new Map(); // Simple mutex for room operations
     }
   }
 
@@ -105,7 +128,11 @@ class RoomStateManager {
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) return cached.data;
 
     try {
-      const state = await this.redis.hGetAll(`room:${roomId}`);
+      const state = await Promise.race([
+        this.redis.hGetAll(`room:${roomId}`),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 3000))
+      ]);
+      
       if (!state || Object.keys(state).length === 0) return null;
 
       const parsed = {
@@ -128,21 +155,31 @@ class RoomStateManager {
     }
   }
 
-  // Returns true if this call created the room, false if it already existed.
   async initRoom(roomId, data) {
     if (this.fallbackMode) {
-      if (this.memoryRooms.has(roomId)) return false;
-      this.memoryRooms.set(roomId, {
-        code:        data.code        || "",
-        language:    data.language    || "javascript",
-        users:       data.users       || [],
-        messages:    data.messages    || [],
-        events:      data.events      || [],
-        interviewId: data.interviewId || null,
-        focusMode:   false,
-        timerEndsAt: null,
-      });
-      return true;
+      // Simple mutex to prevent race conditions
+      if (this.roomLocks.has(roomId)) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        return this.memoryRooms.has(roomId) ? false : true;
+      }
+      
+      this.roomLocks.set(roomId, true);
+      try {
+        if (this.memoryRooms.has(roomId)) return false;
+        this.memoryRooms.set(roomId, {
+          code:        data.code        || "",
+          language:    data.language    || "javascript",
+          users:       data.users       || [],
+          messages:    data.messages    || [],
+          events:      data.events      || [],
+          interviewId: data.interviewId || null,
+          focusMode:   false,
+          timerEndsAt: null,
+        });
+        return true;
+      } finally {
+        this.roomLocks.delete(roomId);
+      }
     }
     
     if (!this.redis?.isReady) {
@@ -151,18 +188,21 @@ class RoomStateManager {
     }
 
     try {
-      const created = await this.redis.eval(INIT_ROOM_SCRIPT, {
-        keys: [`room:${roomId}`],
-        arguments: [
-          data.code        || "",
-          data.language    || "javascript",
-          JSON.stringify(data.users     || []),
-          JSON.stringify(data.messages  || []),
-          JSON.stringify(data.events    || []),
-          data.interviewId || "",
-          String(ROOM_TTL_S),
-        ],
-      });
+      const created = await Promise.race([
+        this.redis.eval(INIT_ROOM_SCRIPT, {
+          keys: [`room:${roomId}`],
+          arguments: [
+            data.code        || "",
+            data.language    || "javascript",
+            JSON.stringify(data.users     || []),
+            JSON.stringify(data.messages  || []),
+            JSON.stringify(data.events    || []),
+            data.interviewId || "",
+            String(ROOM_TTL_S),
+          ],
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 5000))
+      ]);
       this._invalidate(roomId);
       return created === 1;
     } catch (err) {
@@ -205,8 +245,6 @@ class RoomStateManager {
     }
   }
 
-  // Atomically upsert a user (match by name+role, update socketId) or append.
-  // Returns the updated users array.
   async upsertUser(roomId, { id, name, role }) {
     if (this.fallbackMode) {
       const room = this.memoryRooms.get(roomId);
@@ -229,10 +267,13 @@ class RoomStateManager {
     if (!this.redis?.isReady) return [];
     
     try {
-      const raw = await this.redis.eval(UPSERT_USER_SCRIPT, {
-        keys: [`room:${roomId}`],
-        arguments: [id, name, role],
-      });
+      const raw = await Promise.race([
+        this.redis.eval(UPSERT_USER_SCRIPT, {
+          keys: [`room:${roomId}`],
+          arguments: [id, name, role],
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 3000))
+      ]);
       this._invalidate(roomId);
       return JSON.parse(raw);
     } catch (err) {
@@ -276,21 +317,39 @@ class RoomStateManager {
     }
   }
 
-  // Kept for callers that need a full overwrite (e.g. peerId update).
-  async updateUsers(roomId, users) {
+  // Atomically update a user's peerId by socketId.
+  // Returns { found, users } — found is false if socketId was not found.
+  async updatePeerId(roomId, socketId, peerId) {
     if (this.fallbackMode) {
       const room = this.memoryRooms.get(roomId);
-      if (room) room.users = users;
-      return;
+      if (!room) return { found: false, users: [] };
+      
+      let found = false;
+      for (const user of room.users) {
+        if (user.id === socketId) {
+          user.peerId = peerId;
+          found = true;
+          break;
+        }
+      }
+      return { found, users: room.users };
     }
     
-    if (!this.redis?.isReady) return;
+    if (!this.redis?.isReady) return { found: false, users: [] };
     
     try {
-      await this.redis.hSet(`room:${roomId}`, "users", JSON.stringify(users));
+      const raw = await Promise.race([
+        this.redis.eval(UPDATE_PEER_ID_SCRIPT, {
+          keys: [`room:${roomId}`],
+          arguments: [socketId, peerId || ""],
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Redis timeout')), 3000))
+      ]);
       this._invalidate(roomId);
+      return JSON.parse(raw);
     } catch (err) {
-      console.error(`[RoomStateManager] Error updating users: ${err.message}`);
+      console.error(`[RoomStateManager] Error updating peer ID: ${err.message}`);
+      return { found: false, users: [] };
     }
   }
 

@@ -50,7 +50,19 @@ async function sendEmail({ to, subject, html }) {
   }
 
   console.log(`[email] Sent successfully. Brevo response:`, responseText);
-  return JSON.parse(responseText);
+  
+  // Safe JSON parsing with validation
+  try {
+    const parsed = JSON.parse(responseText);
+    // Validate response structure
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new Error('Invalid response format');
+    }
+    return parsed;
+  } catch (parseError) {
+    console.error('[email] Failed to parse Brevo response:', parseError);
+    return { success: true, rawResponse: responseText };
+  }
 }
 
 export async function sendVerificationEmail(email, otp) {

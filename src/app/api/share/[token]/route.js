@@ -1,8 +1,28 @@
 import { NextResponse } from "next/server";
 import prisma from "@/lib/db";
+import { rateLimit } from "@/lib/rateLimit";
 
 export async function GET(request, { params }) {
   const { token } = await params;
+  
+  // Rate limit by IP - prevent enumeration and DoS
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0] || 
+             request.headers.get("x-real-ip") || 
+             "unknown";
+  
+  const rl = await rateLimit("share", ip, { limit: 10, windowMs: 60_000 });
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests" },
+      { 
+        status: 429,
+        headers: {
+          "Retry-After": rl.retryAfter?.toString() || "60",
+          "X-RateLimit-Remaining": "0"
+        }
+      }
+    );
+  }
 
   const report = await prisma.aIReport.findUnique({
     where: { shareToken: token },

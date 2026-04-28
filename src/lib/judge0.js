@@ -1,11 +1,66 @@
-import { exec } from "child_process";
+import { spawn } from "child_process";
 import { writeFileSync, unlinkSync, mkdirSync } from "fs";
-import { join } from "path";
+import { join, normalize, resolve } from "path";
 import { platform } from "os";
 import { dockerBreaker, CircuitBreakerOpenError } from "./circuitBreaker";
 import { LANGUAGES } from "@/constants/languages";
 
 const IS_WINDOWS = platform() === "win32";
+const MAX_OUTPUT_SIZE = 5000;
+
+// Docker version detection cache
+let dockerVersion = null;
+let dockerCapabilities = null;
+
+// Detect Docker version and capabilities
+async function detectDockerCapabilities() {
+  if (dockerCapabilities !== null) return dockerCapabilities;
+  
+  return new Promise((resolve) => {
+    const versionProcess = spawn("docker", ["version", "--format", "{{.Server.Version}}"], {
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000
+    });
+    
+    let version = "";
+    versionProcess.stdout?.on("data", (data) => {
+      version += data.toString().trim();
+    });
+    
+    versionProcess.on("close", () => {
+      dockerVersion = version;
+      
+      // Parse version and determine capabilities
+      const versionParts = version.split('.').map(Number);
+      const major = versionParts[0] || 0;
+      const minor = versionParts[1] || 0;
+      
+      dockerCapabilities = {
+        supportsNoNewPrivileges: major > 1 || (major === 1 && minor >= 11),
+        supportsPidsLimit: major > 1 || (major === 1 && minor >= 10),
+        supportsStopTimeout: major > 1 || (major === 1 && minor >= 25),
+        supportsMemorySwap: major > 1 || (major === 1 && minor >= 6),
+        supportsUlimit: major > 1 || (major === 1 && minor >= 6)
+      };
+      
+      console.log(`[Docker] Version ${version} detected, capabilities:`, dockerCapabilities);
+      resolve(dockerCapabilities);
+    });
+    
+    versionProcess.on("error", () => {
+      // Fallback to minimal capabilities for unknown Docker versions
+      dockerCapabilities = {
+        supportsNoNewPrivileges: false,
+        supportsPidsLimit: false,
+        supportsStopTimeout: false,
+        supportsMemorySwap: false,
+        supportsUlimit: false
+      };
+      console.log("[Docker] Version detection failed, using minimal capabilities");
+      resolve(dockerCapabilities);
+    });
+  });
+}
 
 // Build a lookup map from the shared language constants
 const LANGUAGE_CONFIG = Object.fromEntries(
@@ -23,6 +78,26 @@ const CODROOM_TMP = IS_WINDOWS
 function toDockerPath(winPath) {
   if (!IS_WINDOWS) return winPath;
   return winPath.replace(/\\/g, "/");
+}
+
+// Truncate output to prevent browser crashes from infinite loops
+function truncateOutput(output) {
+  if (!output || typeof output !== "string") return "";
+  if (output.length <= MAX_OUTPUT_SIZE) return output;
+  return output.slice(0, MAX_OUTPUT_SIZE) + "\n\n[Output truncated - exceeded 5000 characters]";
+}
+
+// Secure path validation to prevent directory traversal
+function validatePath(filePath, baseDir) {
+  const normalizedPath = normalize(filePath);
+  const resolvedPath = resolve(baseDir, normalizedPath);
+  const resolvedBase = resolve(baseDir);
+  
+  if (!resolvedPath.startsWith(resolvedBase)) {
+    throw new Error("Path traversal attempt detected");
+  }
+  
+  return resolvedPath;
 }
 
 try { mkdirSync(CODROOM_TMP, { recursive: true }); } catch {}
@@ -47,11 +122,20 @@ export async function submitCode(code, language, stdin = "") {
   }
 }
 
-function _runContainer(code, config, stdin) {
+async function _runContainer(code, config, stdin) {
+  // Detect Docker capabilities first
+  const capabilities = await detectDockerCapabilities();
+  
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const filename = `codroom_${id}.${config.ext}`;
-    const tmpFile = join(CODROOM_TMP, filename);
+    
+    // Validate filename to prevent path traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return resolve({ stdout: "", stderr: "Invalid filename", error: "Invalid filename" });
+    }
+    
+    const tmpFile = validatePath(filename, CODROOM_TMP);
 
     try {
       writeFileSync(tmpFile, code, { encoding: "utf8" });
@@ -59,48 +143,150 @@ function _runContainer(code, config, stdin) {
       return resolve({ stdout: "", stderr: "", error: "Failed to write temp file: " + err.message });
     }
 
-    // Mount the single file read-only; no network; capped memory + CPU
-    const dockerCmd = [
-      "docker run --rm",
-      "--network none",
-      "--memory 128m --memory-swap 128m",
-      "--cpus 0.5",
+    // Build Docker arguments with version-specific capabilities
+    const dockerArgs = [
+      "run", "--rm",
+      "--network", "none",
+      "--memory", "128m",
+      "--cpus", "0.5",
       "--read-only",
-      "--tmpfs /tmp:size=32m",
-      "--no-new-privileges",
-      "--cap-drop ALL",
-      "--pids-limit 64",
-      "--user 65534:65534",
-      "--stop-timeout 2",
-      `--name codroom_${id}`,
-      `--volume "${toDockerPath(tmpFile)}:/sandbox/${filename}:ro"`,
-      `--workdir /sandbox`,
-      `--ulimit nproc=64`,
-      config.image,
-      config.cmd(filename),
-    ].join(" ");
+      "--tmpfs", "/tmp:size=32m",
+      "--cap-drop", "ALL",
+      "--user", "65534:65534",
+      "--name", `codroom_${id}`,
+      "--volume", `${toDockerPath(tmpFile)}:/sandbox/${filename}:ro`,
+      "--workdir", "/sandbox"
+    ];
+    
+    // Add version-specific security flags
+    if (capabilities.supportsMemorySwap) {
+      dockerArgs.push("--memory-swap", "128m");
+    }
+    
+    if (capabilities.supportsNoNewPrivileges) {
+      dockerArgs.push("--no-new-privileges");
+    }
+    
+    if (capabilities.supportsPidsLimit) {
+      dockerArgs.push("--pids-limit", "50");
+    }
+    
+    if (capabilities.supportsStopTimeout) {
+      dockerArgs.push("--stop-timeout", "2");
+    }
+    
+    if (capabilities.supportsUlimit) {
+      dockerArgs.push("--ulimit", "nproc=50", "--ulimit", "cpu=5");
+    }
+    
+    // Add the Docker image
+    dockerArgs.push(config.image);
 
-    const opts = {
-      timeout: 10000,
-      maxBuffer: 1024 * 1024,
-      shell: IS_WINDOWS ? "cmd.exe" : "/bin/sh",
-    };
+    // Add command arguments safely
+    const cmdArgs = config.cmd(filename);
+    dockerArgs.push(...cmdArgs);
 
-    exec(dockerCmd, opts, (error, stdout, stderr) => {
+    const dockerProcess = spawn("docker", dockerArgs, {
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+
+    let stdout = "";
+    let stderr = "";
+    let killed = false;
+    let retryWithMinimalFlags = false;
+
+    const timeout = setTimeout(() => {
+      killed = true;
+      dockerProcess.kill("SIGKILL");
+      spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+    }, 15000);
+
+    dockerProcess.stdout?.on("data", (data) => {
+      stdout += data.toString();
+      if (stdout.length > MAX_OUTPUT_SIZE * 2) {
+        killed = true;
+        dockerProcess.kill("SIGKILL");
+      }
+    });
+
+    dockerProcess.stderr?.on("data", (data) => {
+      const errorText = data.toString();
+      stderr += errorText;
+      
+      // Check for unsupported flag errors
+      if (errorText.includes("unknown flag") || errorText.includes("unknown option")) {
+        retryWithMinimalFlags = true;
+        dockerProcess.kill("SIGTERM");
+      }
+      
+      if (stderr.length > MAX_OUTPUT_SIZE * 2) {
+        killed = true;
+        dockerProcess.kill("SIGKILL");
+      }
+    });
+
+    dockerProcess.on("close", (code, signal) => {
+      clearTimeout(timeout);
+      
+      // If we detected unsupported flags, retry with minimal configuration
+      if (retryWithMinimalFlags && !killed) {
+        console.log("[Docker] Retrying with minimal flags due to unsupported options");
+        
+        // Update capabilities to disable unsupported features
+        dockerCapabilities = {
+          supportsNoNewPrivileges: false,
+          supportsPidsLimit: false,
+          supportsStopTimeout: false,
+          supportsMemorySwap: false,
+          supportsUlimit: false
+        };
+        
+        // Retry with minimal flags
+        cleanup(tmpFile);
+        spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+        
+        // Recursive call with updated capabilities
+        return _runContainer(code, config, stdin).then(resolve).catch(reject);
+      }
+      
       cleanup(tmpFile);
-      exec(`docker rm -f codroom_${id}`, () => {});
+      spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
 
-      if (error?.killed || error?.code === "ETIMEDOUT") {
-        return resolve({ stdout: "", stderr: "Time Limit Exceeded (10s)", error: "TLE" });
+      if (killed || signal === "SIGKILL") {
+        return resolve({ 
+          stdout: "", 
+          stderr: "Time Limit Exceeded (15s)", 
+          error: "TLE" 
+        });
       }
 
-      if (stderr?.includes("Cannot connect") || stderr?.includes("docker: not found") ||
-          (error?.message?.includes("docker") && error?.message?.includes("pipe"))) {
+      if (stderr?.includes("Cannot connect") || stderr?.includes("docker: not found")) {
         return reject(new Error("DOCKER_UNAVAILABLE"));
       }
 
-      resolve({ stdout, stderr, error: error?.message });
+      resolve({ 
+        stdout: truncateOutput(stdout), 
+        stderr: truncateOutput(stderr), 
+        error: code !== 0 ? `Process exited with code ${code}` : null 
+      });
     });
+
+    dockerProcess.on("error", (err) => {
+      clearTimeout(timeout);
+      cleanup(tmpFile);
+      if (err.message?.includes("docker")) {
+        reject(new Error("DOCKER_UNAVAILABLE"));
+      } else {
+        reject(err);
+      }
+    });
+
+    // Send stdin if provided
+    if (stdin && dockerProcess.stdin) {
+      dockerProcess.stdin.write(stdin);
+      dockerProcess.stdin.end();
+    }
   });
 }
 
@@ -113,18 +299,18 @@ export function parseResult(result) {
     return { status: "error", output: result.stderr, type: "Sandbox Error" };
   }
   if (result.stderr?.trim()) {
-    return { status: "error", output: result.stderr.trim(), type: "Runtime Error" };
+    return { status: "error", output: truncateOutput(result.stderr.trim()), type: "Runtime Error" };
   }
   if (result.error && result.error !== "TLE") {
     const msg = result.error.replace(/Command failed:.*\n?/, "").trim();
-    if (msg) return { status: "error", output: msg, type: "Error" };
+    if (msg) return { status: "error", output: truncateOutput(msg), type: "Error" };
   }
   if (result.error === "TLE") {
-    return { status: "error", output: "Time Limit Exceeded (10s)", type: "TLE" };
+    return { status: "error", output: "Time Limit Exceeded (15s)", type: "TLE" };
   }
   return {
     status: "success",
-    output: result.stdout?.trim() || "(No output)",
+    output: truncateOutput(result.stdout?.trim() || "(No output)"),
     type: "Accepted",
   };
 }
