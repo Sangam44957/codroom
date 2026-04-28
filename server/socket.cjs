@@ -34,6 +34,14 @@ if (process.env.INTERNAL_SECRET.length < 32) {
   process.exit(1);
 }
 
+// Log environment configuration for debugging
+logger.info({
+  nodeEnv: process.env.NODE_ENV,
+  appUrl: process.env.NEXT_PUBLIC_APP_URL,
+  socketPort: process.env.PORT || 3001,
+  redisUrl: process.env.REDIS_URL ? '[CONFIGURED]' : '[MISSING]'
+}, 'Environment configuration');
+
 const prisma = require("./db.cjs");
 
 const { getRoomOwnerData, getMessages, persistMessage, updateRoomOnCandidateJoin } = require("./room.service.cjs");
@@ -91,7 +99,42 @@ const httpServer = createServer((req, res) => {
 
 const io = new Server(httpServer, {
   cors: {
-    origin: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, Postman, etc.)
+      if (!origin) return callback(null, true);
+      
+      // List of allowed origins
+      const allowedOrigins = [
+        process.env.NEXT_PUBLIC_APP_URL,
+        "http://localhost:3000",
+        "https://localhost:3000",
+        // Production URLs
+        "https://codroom-two.vercel.app",
+        "https://codroom-socket.onrender.com",
+        // Vercel preview URLs
+        /\.vercel\.app$/,
+        /\.render\.com$/,
+        /\.netlify\.app$/,
+      ].filter(Boolean);
+      
+      // Check if origin matches any allowed pattern
+      const isAllowed = allowedOrigins.some(allowed => {
+        if (typeof allowed === 'string') {
+          return origin === allowed;
+        }
+        if (allowed instanceof RegExp) {
+          return allowed.test(origin);
+        }
+        return false;
+      });
+      
+      if (isAllowed) {
+        callback(null, true);
+      } else {
+        console.warn(`[CORS] Blocked origin: ${origin}`);
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true,
   },
