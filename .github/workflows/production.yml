@@ -174,14 +174,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Railway (Staging)
+      - name: Deploy to Render (Staging)
         run: |
-          npm install -g @railway/cli
-          railway up --service ${{ secrets.RAILWAY_SERVICE_NEXTJS_STAGING }} --detach
-          railway up --service ${{ secrets.RAILWAY_SERVICE_SOCKET_STAGING }} --detach
-          railway run --service ${{ secrets.RAILWAY_SERVICE_NEXTJS_STAGING }} npx prisma migrate deploy
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          echo "Deploy to Render staging - configure with Render deploy hooks"
+          # Add Render deployment logic here if needed
 
       - name: Run smoke tests
         run: |
@@ -198,14 +194,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Railway (Production)
+      - name: Deploy to Render (Production)
         run: |
-          npm install -g @railway/cli
-          railway up --service ${{ secrets.RAILWAY_SERVICE_NEXTJS }} --detach
-          railway up --service ${{ secrets.RAILWAY_SERVICE_SOCKET }} --detach
-          railway run --service ${{ secrets.RAILWAY_SERVICE_NEXTJS }} npx prisma migrate deploy
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          echo "Deploy to Render production - configure with Render deploy hooks"
+          # Add Render deployment logic here if needed
 
       - name: Deploy to AWS ECS (if configured)
         if: vars.DEPLOY_TO_AWS == 'true'

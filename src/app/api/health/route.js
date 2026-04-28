@@ -42,10 +42,14 @@ async function checkRedisHealth() {
 }
 
 async function checkSocketHealth() {
-  const port = process.env.SOCKET_PORT || 3001;
+  // In production, use the socket server URL; in dev, use localhost
+  const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL 
+    ? `${process.env.NEXT_PUBLIC_SOCKET_URL}/health`
+    : `http://localhost:${process.env.SOCKET_PORT || 3001}/health`;
+  
   try {
     const start = Date.now();
-    const res = await fetch(`http://localhost:${port}/health`, {
+    const res = await fetch(socketUrl, {
       signal: AbortSignal.timeout(3000),
     });
     return { healthy: res.ok, latencyMs: Date.now() - start };

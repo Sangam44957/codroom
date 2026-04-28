@@ -55,11 +55,15 @@ terraform apply
 kubectl apply -f k8s/production.yaml
 ```
 
-#### Option C: Railway (Fastest)
+#### Option C: Render (Fastest)
 ```bash
-npm install -g @railway/cli
-railway login
-railway up
+# Connect your GitHub repository to Render
+# 1. Go to https://render.com
+# 2. Connect your GitHub account
+# 3. Create new Web Service from your repository
+# 4. Set environment variables in Render dashboard
+# 5. Deploy automatically on git push
+echo "Render deployment is configured via dashboard"
 ```
 
 ### 4. Automated Deployment

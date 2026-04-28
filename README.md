@@ -216,7 +216,7 @@ node .next/standalone/server.js &
 node server/socket.js &
 ```
 
-**Redis** is required in production. Use Redis Cloud, Upstash, or Railway Redis and set `REDIS_URL`.
+**Redis** is required in production. Use Redis Cloud, Upstash, or Render Redis and set `REDIS_URL`.
 
 **Docker** must be running on the server for code execution. The sandbox runs with `--network none`, `--memory 128m`, `--cpus 0.5`, `--read-only`, and `--cap-drop ALL`.
 
