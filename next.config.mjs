@@ -1,9 +1,4 @@
 import { withSentryConfig } from "@sentry/nextjs";
-import { validateEnv } from "./src/lib/env.js";
-
-if (process.env.NODE_ENV === "production") {
-  validateEnv();
-}
 
 const SOCKET_ORIGIN = process.env.NEXT_PUBLIC_SOCKET_URL
   ? new URL(process.env.NEXT_PUBLIC_SOCKET_URL).origin
