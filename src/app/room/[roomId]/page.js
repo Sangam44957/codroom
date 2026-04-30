@@ -82,9 +82,9 @@ export default function RoomPage() {
   const [editorFullscreen, setEditorFullscreen] = useState(false);
   const [boardFullscreen, setBoardFullscreen] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
-  const [localWarningCount, setLocalWarningCount] = useState(0);
+  const [needsFullscreenConsent, setNeedsFullscreenConsent] = useState(false);
 
-  // Resizable problem panel width (px)
+  const [localWarningCount, setLocalWarningCount] = useState(0);
   const [problemWidth, setProblemWidth] = useState(320);
   const containerRef = useRef(null);
   const editorFocusRef = useRef(null); // set by CodeEditor via onEditorMount
@@ -332,16 +332,15 @@ export default function RoomPage() {
     onFocusModeChanged((enabled) => setFocusMode(enabled));
   }, [onFocusModeChanged]);
 
-  // When interviewer unlocks, reset candidate lock state and re-enter fullscreen
+  // When interviewer unlocks, reset candidate lock state and show consent gate
   useEffect(() => {
     onCandidateUnlocked(() => {
       unlock();
-      // Re-enter fullscreen if focus mode is still active
-      if (document.fullscreenElement === null) {
-        document.documentElement.requestFullscreen().catch(() => {});
+      if (focusMode && !document.fullscreenElement) {
+        setNeedsFullscreenConsent(true);
       }
     });
-  }, [onCandidateUnlocked, unlock]);
+  }, [onCandidateUnlocked, unlock, focusMode]);
 
   useEffect(() => {
     onCodeUpdate((remoteCode) => {
@@ -373,22 +372,6 @@ export default function RoomPage() {
     const activeUserIds = new Set(users.map((u) => u.id));
     setRemoteCursors((prev) => prev.filter((c) => activeUserIds.has(c.userId)));
   }, [users]);
-
-  // Enter fullscreen when focus mode activates, exit when it deactivates
-  useEffect(() => {
-    if (focusMode && session.role === "candidate") {
-      requestFullscreen().catch((err) => {
-        console.warn("Fullscreen request failed:", err.message);
-        // Don't show error to user as this is expected behavior in some browsers
-      });
-    } else if (!focusMode && session.role === "candidate") {
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch((err) => {
-          console.warn("Exit fullscreen failed:", err.message);
-        });
-      }
-    }
-  }, [focusMode, session.role, requestFullscreen]);
 
 
   // Sync timer from socket — register via ref pattern to avoid setState-in-effect lint error
@@ -633,6 +616,30 @@ export default function RoomPage() {
   return (
     <div className="h-screen flex flex-col bg-[#0d0d14] overflow-hidden text-slate-200" onKeyDown={handleEscapeKey}>
 
+      {needsFullscreenConsent && session.role === "candidate" && (
+        <div className="fixed inset-0 z-[9998] bg-[#04040f]/95 backdrop-blur-md flex items-center justify-center px-4">
+          <div className="max-w-md text-center">
+            <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center">
+              <Lock size={28} className="text-amber-400" />
+            </div>
+            <h2 className="text-2xl font-black text-white mb-3">Focus Mode Enabled</h2>
+            <p className="text-slate-400 text-sm leading-relaxed mb-6">
+              Your interviewer has enabled focus mode. Click below to enter fullscreen.
+              Tab switching and copy/paste will be monitored.
+            </p>
+            <button
+              onClick={async () => {
+                await requestFullscreen();
+                setNeedsFullscreenConsent(false);
+              }}
+              className="px-8 py-3 bg-gradient-to-r from-violet-600 to-cyan-600 hover:from-violet-500 hover:to-cyan-500 text-white rounded-xl font-bold transition-all"
+            >
+              Enter Focus Mode
+            </button>
+          </div>
+        </div>
+      )}
+
       {(localWarningCount > 0 || isLocked) && (
         <SecurityWarning
           warningCount={localWarningCount}
@@ -848,11 +855,15 @@ export default function RoomPage() {
           {/* Focus mode toggle — interviewer only, only during active interview */}
           {isInterviewer && interviewStatus === "in_progress" && (
             <button
-              onClick={() => {
+              onClick={async () => {
                 const next = !focusMode;
-                setFocusMode(next);
-                emitSetFocusMode(next);
-                toast(next ? "🔒 Focus mode ON — candidate is now monitored" : "🔓 Focus mode OFF — candidate can browse freely");
+                try {
+                  await emitSetFocusMode(next);
+                  setFocusMode(next);
+                  toast(next ? "🔒 Focus mode ON — candidate is now monitored" : "🔓 Focus mode OFF — candidate can browse freely");
+                } catch (err) {
+                  toast.error(`Failed to toggle focus mode: ${err.message}`);
+                }
               }}
               className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md font-semibold transition-all border ${
                 focusMode

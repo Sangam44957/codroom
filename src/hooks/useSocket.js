@@ -313,7 +313,16 @@ export default function useSocket(roomId, userName, role, token, roomTicket) {
   );
 
   const emitSetFocusMode = useCallback(
-    (enabled) => socketRef.current?.emit("set-focus-mode", { roomId, enabled }),
+    (enabled) => new Promise((resolve, reject) => {
+      const sock = socketRef.current;
+      if (!sock) return reject(new Error("Socket not connected"));
+      const timeout = setTimeout(() => reject(new Error("Server did not ack")), 3000);
+      sock.emit("set-focus-mode", { roomId, enabled }, (ack) => {
+        clearTimeout(timeout);
+        if (ack?.ok) resolve(ack);
+        else reject(new Error(ack?.error || "Server rejected focus toggle"));
+      });
+    }),
     [roomId]
   );
 

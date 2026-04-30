@@ -29,7 +29,9 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
   const addViolation = useCallback((type, details) => {
     if (!isActive) return;
     const violation = {
-      id: Date.now().toString(),
+      id: typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`,
       type,
       details,
       timestamp: new Date().toISOString(),
@@ -79,17 +81,18 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
     }
 
     function handlePaste(e) {
-      // Ignore paste events that originate inside the Monaco editor iframe/container
       const target = e.target;
-      const isInEditor = target?.closest?.(".monaco-editor") ||
-        target?.closest?.("[data-keybinding-context]") ||
-        target?.tagName === "TEXTAREA" ||
-        target?.tagName === "INPUT";
-      if (isInEditor) return;
-
+      const inEditor = !!target?.closest?.(".monaco-editor");
+      const inFormInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA";
+      
       const pastedText = e.clipboardData?.getData("text") || "";
-      if (pastedText.length > 20) {
-        addViolation("paste_detected", `Candidate pasted ${pastedText.length} characters outside editor`);
+      if (!pastedText) return;
+      
+      if (inEditor && pastedText.length > 40) {
+        // Primary cheating signal - large paste into code editor
+        addViolation("paste_in_editor", `Pasted ${pastedText.length} chars into editor`);
+      } else if (!inEditor && !inFormInput && pastedText.length > 20) {
+        addViolation("paste_detected", `Pasted ${pastedText.length} chars outside editor`);
       }
     }
 
