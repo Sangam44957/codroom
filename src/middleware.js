@@ -8,7 +8,7 @@ const COOKIE_NAME = "codroom-token";
 const OWNER_ROUTES = ["/dashboard", "/problems"];
 const AUTH_ROUTES = ["/login", "/register"];
 
-export default async function proxy(request) {
+export default async function middleware(request) {
   const { pathname } = request.nextUrl;
   const token = request.cookies.get(COOKIE_NAME)?.value;
 

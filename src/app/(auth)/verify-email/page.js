@@ -35,11 +35,15 @@ function VerifyOtpContent() {
     if (otp.length !== 6) { setError("Enter the 6-digit code"); return; }
     setLoading(true); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/auth/verify-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, otp }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (!res.ok) { setError(data.error); return; }
       router.push("/dashboard");
@@ -58,11 +62,15 @@ function VerifyOtpContent() {
     if (resending || countdown > 0) return;
     setResending(true); setResendMsg(""); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/auth/resend-verification", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok) {
         setResendMsg("New code sent! Check your inbox.");

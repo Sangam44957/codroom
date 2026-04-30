@@ -17,11 +17,15 @@ export default function ForgotPasswordPage() {
     if (!email.trim()) { setError("Email is required"); return; }
     setLoading(true); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (!res.ok) { setError(data.error); return; }
       router.push(`/reset-password?email=${encodeURIComponent(email.trim())}`);

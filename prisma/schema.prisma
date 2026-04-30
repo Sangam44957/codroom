@@ -196,40 +196,43 @@ model AIReport {
 }
 
 model HiringPipeline {
-  id          String             @id @default(cuid())
-  name        String
-  description String?
-  status      PipelineStatus     @default(ACTIVE)
-  targetHires Int                @default(1)
-  createdById String
-  templateId  String?
-  createdAt   DateTime           @default(now())
-  updatedAt   DateTime           @updatedAt
-  createdBy   User               @relation(fields: [createdById], references: [id])
-  template    InterviewTemplate? @relation(fields: [templateId], references: [id])
-  rooms       Room[]
+  id                String             @id @default(cuid())
+  name              String
+  description       String?
+  status            PipelineStatus     @default(ACTIVE)
+  targetHires       Int                @default(1)
+  createdById       String
+  templateId        String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  createdBy         User               @relation(fields: [createdById], references: [id])
+  template          InterviewTemplate? @relation(fields: [templateId], references: [id])
+  rooms             Room[]
+  defaultForTemplates InterviewTemplate[] @relation("TemplateDefaultPipeline")
 
   @@index([createdById, status])
   @@map("hiring_pipelines")
 }
 
 model InterviewTemplate {
-  id               String           @id @default(cuid())
-  name             String
-  description      String?
-  ownerId          String
-  language         String           @default("javascript")
-  durationMinutes  Int              @default(60)
-  problemIds       String[]         @default([])
-  focusModeEnabled Boolean          @default(false)
-  rubricWeights    Json?
-  customPrompt     String?
-  usageCount       Int              @default(0)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  pipelines        HiringPipeline[]
-  owner            User             @relation(fields: [ownerId], references: [id])
-  rooms            Room[]
+  id                 String           @id @default(cuid())
+  name               String
+  description        String?
+  ownerId            String
+  language           String           @default("javascript")
+  durationMinutes    Int              @default(60)
+  problemIds         String[]         @default([])
+  focusModeEnabled   Boolean          @default(false)
+  rubricWeights      Json?
+  customPrompt       String?
+  defaultPipelineId  String?
+  usageCount         Int              @default(0)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  defaultPipeline    HiringPipeline?  @relation("TemplateDefaultPipeline", fields: [defaultPipelineId], references: [id])
+  pipelines          HiringPipeline[]
+  owner              User             @relation(fields: [ownerId], references: [id])
+  rooms              Room[]
 
   @@index([ownerId])
   @@map("interview_templates")

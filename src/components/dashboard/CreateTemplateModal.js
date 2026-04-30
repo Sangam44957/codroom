@@ -20,19 +20,34 @@ export default function CreateTemplateModal({ onClose, onCreated }) {
     name: "", description: "", language: "javascript", durationMinutes: 60, focusModeEnabled: false,
   });
   const [problems, setProblems] = useState([]);
+  const [pipelines, setPipelines] = useState([]);
   const [selectedProblems, setSelectedProblems] = useState([]);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
   const [loadingProblems, setLoadingProblems] = useState(false);
+  const [loadingPipelines, setLoadingPipelines] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     setLoadingProblems(true);
-    fetch("/api/problems")
-      .then((r) => r.json())
-      .then((d) => { if (d.problems) setProblems(d.problems); })
-      .finally(() => setLoadingProblems(false));
+    setLoadingPipelines(true);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    
+    Promise.all([
+      fetch("/api/problems", { signal: controller.signal }).then(r => r.json()),
+      fetch("/api/pipelines", { signal: controller.signal }).then(r => r.json())
+    ])
+      .then(([problemsData, pipelinesData]) => {
+        if (problemsData.problems) setProblems(problemsData.problems);
+        if (pipelinesData.pipelines) setPipelines(pipelinesData.pipelines.filter(p => p.status === "ACTIVE"));
+      })
+      .finally(() => { 
+        clearTimeout(timeoutId); 
+        setLoadingProblems(false);
+        setLoadingPipelines(false);
+      });
   }, []);
 
   const selectedIds = new Set(selectedProblems.map((p) => p.id));
@@ -47,6 +62,8 @@ export default function CreateTemplateModal({ onClose, onCreated }) {
     if (!form.name.trim()) { setError("Name is required"); return; }
     setLoading(true); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -54,8 +71,11 @@ export default function CreateTemplateModal({ onClose, onCreated }) {
           ...form,
           durationMinutes: Number(form.durationMinutes) || 60,
           problemIds: selectedProblems.map((p) => p.id),
+          defaultPipelineId: form.defaultPipelineId || null,
         }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.status === 401) { router.push("/login"); return; }
       if (!res.ok) { setError(data.error || "Failed to create template"); return; }
@@ -105,6 +125,25 @@ export default function CreateTemplateModal({ onClose, onCreated }) {
                 onChange={(e) => setForm((p) => ({ ...p, durationMinutes: e.target.value }))} className={inputCls} />
             </div>
           </div>
+
+          {pipelines.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-2">
+                Default Pipeline <span className="text-slate-600">(optional — rooms from this template will auto-join)</span>
+              </label>
+              <select
+                value={form.defaultPipelineId || ""}
+                onChange={(e) => setForm((p) => ({ ...p, defaultPipelineId: e.target.value || null }))}
+                className={inputCls}
+                disabled={loadingPipelines}
+              >
+                <option value="" className="bg-[#0a0818]">None</option>
+                {pipelines.map((pl) => (
+                  <option key={pl.id} value={pl.id} className="bg-[#0a0818]">{pl.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {/* Selected problems */}
           {selectedProblems.length > 0 && (

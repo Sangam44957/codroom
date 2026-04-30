@@ -47,11 +47,13 @@ export default function SharedReportPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    fetch(`/api/share/${token}`)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    fetch(`/api/share/${token}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => { if (d.error) setError(d.error); else setData(d); })
       .catch(() => setError("Failed to load report"))
-      .finally(() => setLoading(false));
+      .finally(() => { clearTimeout(timeoutId); setLoading(false); });
   }, [token]);
 
   const rec = useMemo(() => REC[recKey(data?.report?.recommendation)] || REC.BORDERLINE, [data]);

@@ -3,9 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev --port 3000",
-    "dev:socket": "node server/socket.cjs",
+    "dev:socket": "node server/socket.mjs",
     "dev:all": "npx kill-port 3000 3001 && concurrently -k -r -n NEXT,SOCKET -c cyan,yellow \"npm run dev\" \"npm run dev:socket\"",
     "kill:ports": "npx kill-port 3000 3001",
     "start:clean": "npm run kill:ports && npm run dev:all",
@@ -13,7 +16,7 @@
     "build:all": "prisma generate && next build",
     "build:docker": "docker build -t codroom-app -f Dockerfile.prod . && docker build -t codroom-socket -f Dockerfile.socket .",
     "start": "next start",
-    "start:socket": "node server/socket.cjs",
+    "start:socket": "node server/socket.mjs",
     "start:all": "concurrently -k -r -n NEXT,SOCKET -c cyan,yellow \"npm run start\" \"npm run start:socket\"",
     "lint": "next lint",
     "lint:fix": "next lint --fix",
@@ -22,7 +25,7 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "test:e2e": "jest --testPathPattern=e2e",
-    "seed": "node prisma/seed.js",
+    "seed": "node prisma/seed.cjs",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",

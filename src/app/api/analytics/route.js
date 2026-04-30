@@ -100,7 +100,7 @@ export const GET = withAuthz(async (request) => {
     `,
   ]);
 
-  return NextResponse.json({
+  const response = NextResponse.json({
     period: { days, since: since.toISOString() },
     overview: {
       totalRooms,
@@ -139,4 +139,7 @@ export const GET = withAuthz(async (request) => {
       overallScore:   iv.report?.overallScore    ?? null,
     })),
   });
+
+  response.headers.set('Cache-Control', 'private, max-age=30');
+  return response;
 });

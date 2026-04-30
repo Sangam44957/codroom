@@ -11,7 +11,13 @@ export default function Navbar({ user }) {
   async function handleLogout() {
     setLoggingOut(true);
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      await fetch("/api/auth/logout", { 
+        method: "POST",
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
       router.push("/login");
       router.refresh();
     } catch { setLoggingOut(false); }
@@ -27,10 +33,10 @@ export default function Navbar({ user }) {
             <span className="text-base font-bold text-white tracking-tight">CodRoom</span>
           </Link>
           {user && (
-            <div className="flex items-center gap-1">
-              <Link href="/dashboard" className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Dashboard</Link>
-              <Link href="/problems"  className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Problems</Link>
-              <Link href="/analytics" className="px-3 py-1.5 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-white/[0.05] transition-all">Analytics</Link>
+            <div className="flex items-center gap-2">
+              <Link href="/dashboard" className="px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-lg hover:bg-white/[0.08] transition-all">Dashboard</Link>
+              <Link href="/problems"  className="px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-lg hover:bg-white/[0.08] transition-all">Problems</Link>
+              <Link href="/analytics" className="px-4 py-2 text-slate-300 hover:text-white text-sm font-medium rounded-lg hover:bg-white/[0.08] transition-all">Analytics</Link>
             </div>
           )}
         </div>

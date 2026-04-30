@@ -3,8 +3,8 @@ import prisma from "@/lib/db";
 const TEMPLATE_SELECT = {
   id: true, name: true, description: true, language: true,
   durationMinutes: true, problemIds: true, focusModeEnabled: true,
-  rubricWeights: true, customPrompt: true, usageCount: true,
-  createdAt: true, updatedAt: true, ownerId: true,
+  rubricWeights: true, customPrompt: true, defaultPipelineId: true,
+  usageCount: true, createdAt: true, updatedAt: true, ownerId: true,
 };
 
 export async function findTemplatesByOwner(ownerId) {

@@ -5,6 +5,7 @@ import {
   updateTemplate,
   deleteTemplate,
 } from "@/repositories/template.repository";
+import { findPipelineByIdOnly } from "@/repositories/pipeline.repository";
 
 const VALID_LANGUAGES = ["javascript", "typescript", "python", "java", "cpp", "go", "rust"];
 
@@ -13,9 +14,17 @@ export async function listTemplates(userId) {
 }
 
 export async function createNewTemplate(body, userId) {
-  const { name, description, language, durationMinutes, problemIds, focusModeEnabled, rubricWeights, customPrompt } = body;
+  const { name, description, language, durationMinutes, problemIds, focusModeEnabled, rubricWeights, customPrompt, defaultPipelineId } = body;
   if (!name?.trim()) return { error: "name is required", status: 400 };
   if (language && !VALID_LANGUAGES.includes(language)) return { error: "Invalid language", status: 400 };
+
+  // Validate pipeline ownership if provided
+  if (defaultPipelineId) {
+    const pipeline = await findPipelineByIdOnly(defaultPipelineId);
+    if (!pipeline || pipeline.createdById !== userId) {
+      return { error: "Pipeline not found or access denied", status: 400 };
+    }
+  }
 
   const template = await createTemplate({
     name: name.trim(),
@@ -27,6 +36,7 @@ export async function createNewTemplate(body, userId) {
     focusModeEnabled: focusModeEnabled || false,
     rubricWeights: rubricWeights || null,
     customPrompt: customPrompt?.trim() || null,
+    defaultPipelineId: defaultPipelineId || null,
   });
   return { template };
 }
@@ -36,7 +46,7 @@ export async function updateExistingTemplate(id, body, userId) {
   if (!template) return { error: "Template not found", status: 404 };
   if (template.ownerId !== userId) return { error: "Access denied", status: 403 };
 
-  const { name, description, language, durationMinutes, problemIds, focusModeEnabled, rubricWeights, customPrompt } = body;
+  const { name, description, language, durationMinutes, problemIds, focusModeEnabled, rubricWeights, customPrompt, defaultPipelineId } = body;
   if (language && !VALID_LANGUAGES.includes(language)) return { error: "Invalid language", status: 400 };
 
   const updated = await updateTemplate(id, {
@@ -48,6 +58,7 @@ export async function updateExistingTemplate(id, body, userId) {
     ...(focusModeEnabled !== undefined && { focusModeEnabled }),
     ...(rubricWeights !== undefined && { rubricWeights }),
     ...(customPrompt !== undefined && { customPrompt: customPrompt?.trim() || null }),
+    ...(defaultPipelineId !== undefined && { defaultPipelineId: defaultPipelineId || null }),
   });
   return { template: updated };
 }

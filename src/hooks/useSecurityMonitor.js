@@ -133,7 +133,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
       }
     }
 
-    // Block dynamically injected external scripts
+    // Block dynamically injected external scripts (head only)
     const scriptObserver = new MutationObserver((mutations) => {
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
@@ -144,7 +144,7 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
         }
       }
     });
-    scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+    scriptObserver.observe(document.head, { childList: true });
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("blur", handleBlur);
@@ -169,10 +169,14 @@ export default function useSecurityMonitor(isActive, onViolation, onLocked, lock
 
   const requestFullscreen = useCallback(async () => {
     try {
-      await document.documentElement.requestFullscreen();
-      setIsFullscreen(true);
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
+      }
     } catch (err) {
-      console.error("Fullscreen request failed:", err);
+      // Fullscreen API requires user gesture - this is expected to fail sometimes
+      console.warn("Fullscreen request failed:", err.message);
+      // Don't throw error as this is normal browser behavior
     }
   }, []);
 

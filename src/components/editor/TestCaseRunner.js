@@ -30,7 +30,7 @@ export default function TestCaseRunner({
     if (candidatePath) {
       try {
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         const res = await fetch(`/api/rooms/${roomId}/run-tests`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -68,7 +68,7 @@ export default function TestCaseRunner({
       try {
         const wrappedCode = wrapCodeWithTest(code, language, tc);
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
         const res = await fetch("/api/execute", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -367,9 +367,10 @@ function wrapCodeWithTest(code, language, testCase) {
       return wrapClassTest(code, testCase);
     }
     // Arrow function: const twoSum = (nums, target) => ...
-    const arrowMatch = code.match(/const\s+(\w+)\s*=\s*(?:async\s*)?\(/);
+    const arrowMatch = code.match(/const\s+(\w+)\s*=\s*(?:async\s*)?\s*\([^)]*\)\s*=>/);
     const funcMatch = code.match(/(?:async\s+)?function\s+(\w+)/);
-    const match = funcMatch || arrowMatch;
+    const namedFuncMatch = code.match(/const\s+(\w+)\s*=\s*(?:async\s+)?function\s*\([^)]*\)/);
+    const match = funcMatch || arrowMatch || namedFuncMatch;
     if (match) {
       const funcName = match[1];
       const args = Object.values(testCase.input);

@@ -11,6 +11,7 @@ import ChatPanel from "@/components/ui/ChatPanel";
 import NotesPanel from "@/components/ui/NotesPanel";
 import SecurityWarning from "@/components/ui/SecurityWarning";
 import VideoPanel from "@/components/video/VideoPanel";
+import VideoDebug from "@/components/debug/VideoDebug";
 import Whiteboard from "@/components/whiteboard/Whiteboard";
 import useSocket from "@/hooks/useSocket";
 import useSecurityMonitor from "@/hooks/useSecurityMonitor";
@@ -376,9 +377,16 @@ export default function RoomPage() {
   // Enter fullscreen when focus mode activates, exit when it deactivates
   useEffect(() => {
     if (focusMode && session.role === "candidate") {
-      requestFullscreen();
+      requestFullscreen().catch((err) => {
+        console.warn("Fullscreen request failed:", err.message);
+        // Don't show error to user as this is expected behavior in some browsers
+      });
     } else if (!focusMode && session.role === "candidate") {
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch((err) => {
+          console.warn("Exit fullscreen failed:", err.message);
+        });
+      }
     }
   }, [focusMode, session.role, requestFullscreen]);
 
@@ -1121,6 +1129,11 @@ export default function RoomPage() {
       </div>
 
       <ShortcutHelpModal open={showShortcutModal} onClose={() => setShowShortcutModal(false)} />
+      
+      {/* Debug panel - remove in production
+      {process.env.NODE_ENV === "development" && (
+        <VideoDebug users={users} isConnected={isConnected} />
+      )} */}
     </div>
   );
 }

@@ -31,7 +31,8 @@ const securityHeaders = [
     value: [
       "default-src 'self'",
       // 'unsafe-inline' required for Next.js inline scripts (hydration chunks)
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://browser.sentry-cdn.com",
+      // 'unsafe-eval' required for React development mode (Turbopack)
+      `script-src 'self' 'unsafe-inline' ${IS_PROD ? '' : "'unsafe-eval'"} https://cdn.jsdelivr.net https://browser.sentry-cdn.com`,
       "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com data:",
       "img-src 'self' data: blob:",

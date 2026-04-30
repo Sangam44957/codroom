@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io } from "socket.io-client";
 import { toast } from "sonner";
+import { logHealthCheck } from "@/lib/healthCheck";
 
 const MAX_MESSAGES = 200;
 const MAX_TIMELINE_EVENTS = 500; // Cap timeline events to prevent memory growth
@@ -47,13 +48,14 @@ export default function useSocket(roomId, userName, role, token, roomTicket) {
 
     const socket = io(socketUrl, {
       transports: ["websocket", "polling"],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
+      reconnectionAttempts: 15,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
       randomizationFactor: 0.5,
-      timeout: 20000,
+      timeout: 10000,
       forceNew: true,
       auth: { roomTicket, token },
+      autoConnect: true,
     });
 
     socketRef.current = socket;
@@ -75,27 +77,36 @@ export default function useSocket(roomId, userName, role, token, roomTicket) {
 
     socket.on("disconnect", (reason) => {
       setIsConnected(false);
-      // "io server disconnect" means the server explicitly kicked us — don't auto-reconnect
+      setIsJoined(false);
+      console.warn(`[socket] Disconnected: ${reason}`);
+      
+      // Different handling based on disconnect reason
       if (reason === "io server disconnect") {
-        toast.error("Disconnected by server", { id: "socket-disconnect" });
-        // Do not reconnect - server intentionally disconnected us
+        toast.error("Disconnected by server", { id: "socket-disconnect", duration: 5000 });
+      } else if (reason === "transport close" || reason === "transport error") {
+        toast.warning("Lost connection to server", { id: "socket-disconnect", duration: Infinity });
       } else {
         toast.warning("Connection lost — reconnecting…", { id: "socket-disconnect", duration: Infinity });
       }
     });
 
     socket.on("connect_error", (err) => {
+      console.error("[socket] connect_error details:", {
+        message: err.message,
+        description: err.description,
+        context: err.context,
+        type: err.type,
+        socketUrl,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Run health check on connection errors
+      logHealthCheck();
+      
       // Only show the toast on the first error — socket.io will keep retrying silently
       if (!hasConnectedOnceRef.current) {
-        console.error("[socket] connect_error details:", {
-          message: err.message,
-          description: err.description,
-          context: err.context,
-          type: err.type
-        });
         toast.error(`Connection failed: ${err.message}`, { id: "socket-connect-error", duration: 10000 });
       }
-      console.warn("[socket] connect_error:", err.message);
     });
 
     socket.on("join-error", (data) => {
@@ -222,6 +233,14 @@ export default function useSocket(roomId, userName, role, token, roomTicket) {
     socket.on("remote-cursor", (data) => handlersRef.current.onRemoteCursor?.(data));
     socket.on("timer-sync", (data) => handlersRef.current.onTimerSync?.(data));
 
+    socket.on("force-disconnect", (data) => {
+      const reason = data?.reason || "unknown";
+      if (reason === "duplicate-connection") {
+        toast.warning("Another session detected. Reconnecting...", { id: "duplicate-session", duration: 3000 });
+      }
+      socket.disconnect();
+    });
+
     return () => {
       socket.disconnect();
       socketRef.current = null;
@@ -234,7 +253,7 @@ export default function useSocket(roomId, userName, role, token, roomTicket) {
       hasConnectedOnceRef.current = false;
       reconnectDetectedRef.current = false;
     };
-  }, [roomId, roomTicket]); // roomId and roomTicket trigger reconnect
+  }, [roomId, roomTicket, token]); // roomId, roomTicket, and token trigger reconnect
 
   // ─── Emit helpers ────────────────────────────────────────────
 

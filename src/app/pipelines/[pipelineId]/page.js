@@ -68,10 +68,12 @@ export default function PipelineComparePage() {
   const [sortDir, setSortDir] = useState("desc");
 
   useEffect(() => {
-    fetch(`/api/pipelines/${pipelineId}/compare`)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    fetch(`/api/pipelines/${pipelineId}/compare`, { signal: controller.signal })
       .then((r) => r.json())
       .then(setData)
-      .finally(() => setLoading(false));
+      .finally(() => { clearTimeout(timeoutId); setLoading(false); });
   }, [pipelineId]);
 
   function toggleSort(field) {

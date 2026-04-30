@@ -43,9 +43,7 @@ const prisma = globalForPrisma.prisma ?? makePrismaClient();
 // Always preserve singleton in globalThis to prevent multiple instances
 globalForPrisma.prisma = prisma;
 
-prisma.$connect().catch((e) => {
-  console.error("❌ Database connection failed:", e.message);
-});
+// Remove eager connection - let Prisma connect lazily on first query
 
 export default prisma;
 

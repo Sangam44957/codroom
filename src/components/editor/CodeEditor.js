@@ -70,6 +70,8 @@ export default function CodeEditor({
 
   // Inject per-user cursor CSS once per color
   const injectedColorsRef = useRef(new Set());
+  const styleElementsRef = useRef(new Map()); // Track style elements for cleanup
+  
   function ensureCursorStyle(userId, color) {
     if (injectedColorsRef.current.has(userId)) return;
     injectedColorsRef.current.add(userId);
@@ -95,7 +97,39 @@ export default function CodeEditor({
       }
     `;
     document.head.appendChild(style);
+    styleElementsRef.current.set(userId, style);
   }
+
+  // Cleanup style elements when component unmounts or users leave
+  useEffect(() => {
+    return () => {
+      // Clean up all style elements on unmount
+      styleElementsRef.current.forEach((style) => {
+        if (style.parentNode) {
+          style.parentNode.removeChild(style);
+        }
+      });
+      styleElementsRef.current.clear();
+      injectedColorsRef.current.clear();
+    };
+  }, []);
+
+  // Clean up styles for users who are no longer present
+  useEffect(() => {
+    const currentUserIds = new Set(remoteCursors?.map(c => c.userId) || []);
+    const injectedUserIds = Array.from(injectedColorsRef.current);
+    
+    injectedUserIds.forEach(userId => {
+      if (!currentUserIds.has(userId)) {
+        const style = styleElementsRef.current.get(userId);
+        if (style && style.parentNode) {
+          style.parentNode.removeChild(style);
+        }
+        styleElementsRef.current.delete(userId);
+        injectedColorsRef.current.delete(userId);
+      }
+    });
+  }, [remoteCursors]);
 
   // Re-render remote cursor decorations whenever remoteCursors changes
   useEffect(() => {

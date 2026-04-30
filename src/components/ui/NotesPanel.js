@@ -11,11 +11,13 @@ export default function NotesPanel({ roomId }) {
   // Load the single persisted note on mount
   useEffect(() => {
     const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
     async function loadNotes() {
       try {
         const res = await fetch(`/api/rooms/${roomId}/notes`, {
           signal: controller.signal
         });
+        clearTimeout(timeoutId);
         if (res.ok) {
           const data = await res.json();
           if (data.note?.content) setNotes(data.note.content);
@@ -24,7 +26,7 @@ export default function NotesPanel({ roomId }) {
       initialLoadRef.current = false;
     }
     loadNotes();
-    return () => controller.abort();
+    return () => { clearTimeout(timeoutId); controller.abort(); };
   }, [roomId]);
 
   const saveNotes = useCallback(async () => {

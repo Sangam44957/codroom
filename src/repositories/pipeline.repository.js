@@ -20,6 +20,13 @@ export async function findPipelineById(id, userId) {
   });
 }
 
+export async function findPipelineByIdOnly(id) {
+  return prisma.hiringPipeline.findUnique({
+    where: { id },
+    select: { id: true, createdById: true },
+  });
+}
+
 export async function findPipelineWithRooms(id, userId) {
   return prisma.hiringPipeline.findFirst({
     where: { id, createdById: userId },

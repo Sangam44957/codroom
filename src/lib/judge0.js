@@ -7,6 +7,11 @@ import { LANGUAGES } from "@/constants/languages";
 
 const IS_WINDOWS = platform() === "win32";
 const MAX_OUTPUT_SIZE = 5000;
+const MAX_CONCURRENT_CONTAINERS = 5;
+
+// Container concurrency control
+let runningContainers = 0;
+const containerQueue = [];
 
 // Docker version detection cache
 let dockerVersion = null;
@@ -108,6 +113,13 @@ export async function submitCode(code, language, stdin = "") {
     return { stdout: "", stderr: `Unsupported language: ${language}`, error: "Unsupported language" };
   }
 
+  // Check concurrency limit
+  if (runningContainers >= MAX_CONCURRENT_CONTAINERS) {
+    return new Promise((resolve) => {
+      containerQueue.push(() => submitCode(code, language, stdin).then(resolve));
+    });
+  }
+
   try {
     return await dockerBreaker.execute(() => _runContainer(code, config, stdin));
   } catch (err) {
@@ -126,12 +138,16 @@ async function _runContainer(code, config, stdin) {
   // Detect Docker capabilities first
   const capabilities = await detectDockerCapabilities();
   
+  runningContainers++;
+  
   return new Promise((resolve, reject) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const filename = `codroom_${id}.${config.ext}`;
     
     // Validate filename to prevent path traversal
     if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      runningContainers--;
+      processQueue();
       return resolve({ stdout: "", stderr: "Invalid filename", error: "Invalid filename" });
     }
     
@@ -140,6 +156,8 @@ async function _runContainer(code, config, stdin) {
     try {
       writeFileSync(tmpFile, code, { encoding: "utf8" });
     } catch (err) {
+      runningContainers--;
+      processQueue();
       return resolve({ stdout: "", stderr: "", error: "Failed to write temp file: " + err.message });
     }
 
@@ -199,7 +217,11 @@ async function _runContainer(code, config, stdin) {
     const timeout = setTimeout(() => {
       killed = true;
       dockerProcess.kill("SIGKILL");
-      spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+      // Await cleanup to prevent container pile-up
+      cleanupContainer(id, tmpFile).then(() => {
+        runningContainers--;
+        processQueue();
+      });
     }, 15000);
 
     dockerProcess.stdout?.on("data", (data) => {
@@ -226,7 +248,7 @@ async function _runContainer(code, config, stdin) {
       }
     });
 
-    dockerProcess.on("close", (code, signal) => {
+    dockerProcess.on("close", async (code, signal) => {
       clearTimeout(timeout);
       
       // If we detected unsupported flags, retry with minimal configuration
@@ -242,16 +264,17 @@ async function _runContainer(code, config, stdin) {
           supportsUlimit: false
         };
         
-        // Retry with minimal flags
-        cleanup(tmpFile);
-        spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+        // Cleanup and retry
+        await cleanupContainer(id, tmpFile);
+        runningContainers--;
         
         // Recursive call with updated capabilities
         return _runContainer(code, config, stdin).then(resolve).catch(reject);
       }
       
-      cleanup(tmpFile);
-      spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+      await cleanupContainer(id, tmpFile);
+      runningContainers--;
+      processQueue();
 
       if (killed || signal === "SIGKILL") {
         return resolve({ 
@@ -272,9 +295,11 @@ async function _runContainer(code, config, stdin) {
       });
     });
 
-    dockerProcess.on("error", (err) => {
+    dockerProcess.on("error", async (err) => {
       clearTimeout(timeout);
-      cleanup(tmpFile);
+      await cleanupContainer(id, tmpFile);
+      runningContainers--;
+      processQueue();
       if (err.message?.includes("docker")) {
         reject(new Error("DOCKER_UNAVAILABLE"));
       } else {
@@ -288,6 +313,31 @@ async function _runContainer(code, config, stdin) {
       dockerProcess.stdin.end();
     }
   });
+}
+
+async function cleanupContainer(id, tmpFile) {
+  // Clean up temp file
+  try { unlinkSync(tmpFile); } catch {}
+  
+  // Await container removal to prevent pile-up
+  return new Promise((resolve) => {
+    const rmProcess = spawn("docker", ["rm", "-f", `codroom_${id}`], { stdio: "ignore" });
+    rmProcess.on("close", () => resolve());
+    rmProcess.on("error", () => resolve()); // Continue even if rm fails
+    
+    // Timeout the rm command after 5 seconds
+    setTimeout(() => {
+      rmProcess.kill("SIGKILL");
+      resolve();
+    }, 5000);
+  });
+}
+
+function processQueue() {
+  if (containerQueue.length > 0 && runningContainers < MAX_CONCURRENT_CONTAINERS) {
+    const nextTask = containerQueue.shift();
+    nextTask();
+  }
 }
 
 function cleanup(tmpFile) {

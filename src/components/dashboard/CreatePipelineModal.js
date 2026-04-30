@@ -23,11 +23,15 @@ export default function CreatePipelineModal({ onClose, onCreated }) {
     if (!form.name.trim()) { setError("Pipeline name is required"); return; }
     setLoading(true); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/pipelines", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, targetHires: Number(form.targetHires) || 1 }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.status === 401) { router.push("/login"); return; }
       if (!res.ok) { setError(data.error || "Failed to create pipeline"); return; }

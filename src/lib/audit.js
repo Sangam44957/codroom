@@ -21,7 +21,7 @@ export const AuditActions = {
   USER_DELETED:                "user.deleted",
 };
 
-export function audit({ actorId = null, actorEmail = null, actorRole = null, action, resource, resourceId, metadata = null, request = null }) {
+export async function audit({ actorId = null, actorEmail = null, actorRole = null, action, resource, resourceId, metadata = null, request = null }) {
   const entry = {
     actorId,
     actorEmail,
@@ -36,9 +36,12 @@ export function audit({ actorId = null, actorEmail = null, actorRole = null, act
     userAgent: request?.headers?.get("user-agent") || null,
   };
 
-  prisma.auditLog.create({ data: entry }).catch((err) =>
-    logger.error({ err, action }, "audit write failed")
-  );
-
-  logger.info({ audit: { actorId, actorEmail, action, resource, resourceId } }, `audit: ${action}`);
+  try {
+    await prisma.auditLog.create({ data: entry });
+    logger.info({ audit: { actorId, actorEmail, action, resource, resourceId } }, `audit: ${action}`);
+  } catch (err) {
+    logger.error({ err, action, entry }, "CRITICAL: audit write failed - security event not recorded");
+    // Re-throw to ensure calling code knows audit failed
+    throw new Error(`Audit logging failed for ${action}: ${err.message}`);
+  }
 }

@@ -43,6 +43,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [tplCandidateName, setTplCandidateName] = useState("");
   const [tplTitle, setTplTitle] = useState("");
+  const [tplPipelineId, setTplPipelineId] = useState(null);
   const [tplLoading, setTplLoading] = useState(false);
   const [tplError, setTplError] = useState("");
 
@@ -60,7 +61,10 @@ export default function CreateRoomModal({ isOpen, onClose }) {
   async function fetchProblems() {
     setLoadingProblems(true);
     try {
-      const res = await fetch("/api/problems");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch("/api/problems", { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok) setProblems(data.problems);
     } catch { } finally { setLoadingProblems(false); }
@@ -68,7 +72,10 @@ export default function CreateRoomModal({ isOpen, onClose }) {
 
   async function fetchPipelines() {
     try {
-      const res = await fetch("/api/pipelines");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch("/api/pipelines", { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok) setPipelines(data.pipelines.filter((p) => p.status === "ACTIVE"));
     } catch { }
@@ -77,7 +84,10 @@ export default function CreateRoomModal({ isOpen, onClose }) {
   async function fetchTemplates() {
     setLoadingTemplates(true);
     try {
-      const res = await fetch("/api/templates");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch("/api/templates", { signal: controller.signal });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.ok) setTemplates(data.templates);
     } catch { } finally { setLoadingTemplates(false); }
@@ -110,6 +120,8 @@ export default function CreateRoomModal({ isOpen, onClose }) {
     if (!title.trim()) { setError("Room title is required"); return; }
     setLoading(true); setError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/rooms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -120,7 +132,9 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           problemIds: selectedProblems.map((p) => p.id),
           pipelineId: pipelineId || null,
         }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.status === 401) { router.push("/login"); return; }
       if (!res.ok) { toast.error(data.error || "Failed to create room"); setError(data.error); return; }
@@ -136,6 +150,8 @@ export default function CreateRoomModal({ isOpen, onClose }) {
     if (!selectedTemplate) { setTplError("Select a template"); return; }
     setTplLoading(true); setTplError("");
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
       const res = await fetch("/api/rooms/from-template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -143,8 +159,11 @@ export default function CreateRoomModal({ isOpen, onClose }) {
           templateId: selectedTemplate.id,
           candidateName: tplCandidateName.trim() || null,
           title: tplTitle.trim() || null,
+          pipelineId: tplPipelineId || selectedTemplate.defaultPipelineId || null,
         }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
       const data = await res.json();
       if (res.status === 401) { router.push("/login"); return; }
       if (!res.ok) { toast.error(data.error || "Failed to create room"); setTplError(data.error); return; }
@@ -157,7 +176,7 @@ export default function CreateRoomModal({ isOpen, onClose }) {
   function handleClose() {
     setTitle(""); setCandidateName(""); setLanguage("javascript");
     setSelectedProblems([]); setProblemSearch(""); setProblemFilter("all"); setError("");
-    setSelectedTemplate(null); setTplCandidateName(""); setTplTitle(""); setTplError("");
+    setSelectedTemplate(null); setTplCandidateName(""); setTplTitle(""); setTplPipelineId(null); setTplError("");
     setPipelineId("");
     setTab("manual");
     onClose();
@@ -367,6 +386,9 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                     {t.problemIds?.length > 0 && (
                       <p className="text-slate-600 text-xs mt-1.5">{t.problemIds.length} problem{t.problemIds.length !== 1 ? "s" : ""} included</p>
                     )}
+                    {t.defaultPipelineId && (
+                      <p className="text-slate-600 text-xs mt-1">Default pipeline: {pipelines.find(p => p.id === t.defaultPipelineId)?.name || "Unknown"}</p>
+                    )}
                   </div>
                 ))}
               </div>
@@ -386,6 +408,25 @@ export default function CreateRoomModal({ isOpen, onClose }) {
                   value={tplCandidateName}
                   onChange={(e) => setTplCandidateName(e.target.value)}
                 />
+                {pipelines.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-300 mb-2">
+                      Add to Pipeline <span className="text-slate-600">(optional{selectedTemplate.defaultPipelineId ? " — overrides template default" : ""})</span>
+                    </label>
+                    <select
+                      value={tplPipelineId || selectedTemplate.defaultPipelineId || ""}
+                      onChange={(e) => setTplPipelineId(e.target.value || null)}
+                      className="w-full px-4 py-3.5 bg-white/[0.03] border border-white/[0.06] hover:border-white/[0.12] rounded-xl text-white focus:outline-none focus:ring-2 focus:ring-violet-500/30 focus:border-violet-500/50 transition-all"
+                    >
+                      <option value="" className="bg-[#0a0818]">None</option>
+                      {pipelines.map((pl) => (
+                        <option key={pl.id} value={pl.id} className="bg-[#0a0818]">
+                          {pl.name}{selectedTemplate.defaultPipelineId === pl.id ? " (template default)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 

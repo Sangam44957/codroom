@@ -66,7 +66,8 @@ function wrapCode(code, language, testCase) {
 
     const funcMatch =
       code.match(/(?:async\s+)?function\s+(\w+)/) ||
-      code.match(/const\s+(\w+)\s*=\s*(?:async\s*)?[\(\w]/);
+      code.match(/const\s+(\w+)\s*=\s*(?:async\s*)?\s*\([^)]*\)\s*=>/) ||
+      code.match(/const\s+(\w+)\s*=\s*(?:async\s+)?function\s*\([^)]*\)/);
 
     if (funcMatch) {
       const funcName = funcMatch[1];

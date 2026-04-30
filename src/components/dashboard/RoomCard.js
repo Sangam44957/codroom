@@ -39,7 +39,13 @@ export default function RoomCard({ room, liveCount, onDeleted }) {
     if (!confirm("Mark this interview as closed? This cannot be undone.")) return;
     setClosing(true);
     try {
-      const res = await fetch(`/api/rooms/${room.id}`, { method: "PATCH" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`/api/rooms/${room.id}`, { 
+        method: "PATCH",
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
       if (res.ok) {
         toast.success("Interview closed");
         // Optimistically update the card status
@@ -77,7 +83,13 @@ export default function RoomCard({ room, liveCount, onDeleted }) {
   async function confirmDelete() {
     setDeleting(true);
     try {
-      const res = await fetch(`/api/rooms?roomId=${room.id}`, { method: "DELETE" });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const res = await fetch(`/api/rooms?roomId=${room.id}`, { 
+        method: "DELETE",
+        signal: controller.signal 
+      });
+      clearTimeout(timeoutId);
       if (res.ok) { setShowConfirm(false); onDeleted?.(room.id); toast.success("Room deleted"); }
       else toast.error("Delete failed.");
     } finally { setDeleting(false); }

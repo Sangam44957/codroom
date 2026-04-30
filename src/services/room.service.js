@@ -87,7 +87,14 @@ export async function createNewRoom({ title, candidateName, language, problemId,
         : undefined,
     });
     if (ids.length) {
-      await Promise.all(ids.map((id) => incrementUsageCount(id).catch(() => {})));
+      // Batch increment usage counts to avoid overwhelming DB with concurrent updates
+      for (const id of ids) {
+        try {
+          await incrementUsageCount(id);
+        } catch (error) {
+          console.warn(`Failed to increment usage count for problem ${id}:`, error.message);
+        }
+      }
     }
     return room;
   } catch (error) {

@@ -6,7 +6,10 @@ import { Mic, MicOff, Video, VideoOff } from "lucide-react";
 // Fetch ICE config from the server — TURN credentials never touch the client bundle.
 async function fetchIceServers() {
   try {
-    const res = await fetch("/api/turn");
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    const res = await fetch("/api/turn", { signal: controller.signal });
+    clearTimeout(timeoutId);
     if (res.ok) {
       const data = await res.json();
       return data.iceServers;
@@ -81,11 +84,14 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived, emitCameraTo
 
   useEffect(() => {
     onPeerIdReceived((peerId) => {
+      console.log("📡 Received peer ID:", peerId, "Current call:", !!currentCallRef.current);
       if (currentCallRef.current) return;
       if (!myStreamRef.current) {
+        console.log("📝 Queueing peer ID (stream not ready):", peerId);
         pendingPeerIdRef.current = peerId;
         return;
       }
+      console.log("📞 Calling peer immediately:", peerId);
       callPeer(peerId);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -171,9 +177,11 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived, emitCameraTo
         console.log("🎥 My Peer ID:", id);
         setCallStatus("ready");
         sharePeerId(id);
+        console.log("📡 Shared peer ID with room:", id);
 
         // Bug 5: If a peer ID arrived while we were initializing, call now
         if (pendingPeerIdRef.current) {
+          console.log("📞 Calling pending peer:", pendingPeerIdRef.current);
           callPeer(pendingPeerIdRef.current);
           pendingPeerIdRef.current = null;
         }
@@ -204,7 +212,10 @@ export default function VideoPanel({ sharePeerId, onPeerIdReceived, emitCameraTo
 
   function callPeer(remotePeerId) {
     if (!peerRef.current || !myStreamRef.current) {
-      console.warn("Cannot call — peer or stream not ready");
+      console.warn("⚠️ Cannot call — peer or stream not ready", {
+        peer: !!peerRef.current,
+        stream: !!myStreamRef.current
+      });
       return;
     }
     console.log("📞 Calling peer:", remotePeerId);

@@ -120,11 +120,15 @@ export default function DashboardPage() {
     const timeoutId = setTimeout(() => controller.abort(), 10000);
     
     try {
-      const userRes = await fetch("/api/auth/me", { signal: controller.signal });
+      const [userRes, roomsRes] = await Promise.all([
+        fetch("/api/auth/me", { signal: controller.signal }),
+        fetch(`/api/rooms?page=${p}`, { signal: controller.signal })
+      ]);
+      
       if (!userRes.ok) { router.push("/login"); return; }
       const userData = await userRes.json();
       setUser(userData.user);
-      const roomsRes = await fetch(`/api/rooms?page=${p}`, { signal: controller.signal });
+      
       if (roomsRes.ok) {
         const d = await roomsRes.json();
         setRooms(d.rooms);
@@ -428,6 +432,9 @@ export default function DashboardPage() {
                         )}
                         {t.focusModeEnabled && (
                           <span className="text-xs px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 text-amber-400 rounded-lg">Focus</span>
+                        )}
+                        {t.defaultPipelineId && (
+                          <span className="text-xs px-2 py-0.5 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-lg">Auto-pipeline</span>
                         )}
                       </div>
                     </motion.div>
