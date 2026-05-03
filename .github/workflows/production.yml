@@ -53,6 +53,7 @@ jobs:
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/codroom_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/codroom_test
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: test-jwt-secret-32-chars-minimum
       INTERNAL_SECRET: test-internal-secret-32-chars
