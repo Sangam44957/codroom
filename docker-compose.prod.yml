@@ -5,6 +5,10 @@ services:
     build: 
       context: .
       dockerfile: Dockerfile.prod
+      args:
+        NEXT_PUBLIC_SOCKET_URL: ${PUBLIC_SOCKET_URL}
+        NEXT_PUBLIC_APP_URL: ${PUBLIC_APP_URL}
+    env_file: .env.prod
     ports:
       - "3000:3000"
     environment:
@@ -12,9 +16,17 @@ services:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/codroom
       - REDIS_URL=redis://redis:6379
       - NEXT_PUBLIC_SOCKET_URL=${NEXT_PUBLIC_SOCKET_URL:-ws://localhost:3001}
+      - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_SECRET=${INTERNAL_SECRET}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - BREVO_API_KEY=${BREVO_API_KEY}
+      - BREVO_SENDER_EMAIL=${BREVO_SENDER_EMAIL}
+      - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   socket:
@@ -28,8 +40,10 @@ services:
       - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/codroom
       - REDIS_URL=redis://redis:6379
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   postgres:
@@ -40,12 +54,22 @@ services:
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d codroom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   redis:
     image: redis:7-alpine
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:

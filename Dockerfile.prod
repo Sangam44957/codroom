@@ -6,13 +6,12 @@ RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci
 
 # Rebuild the source code only when needed
 FROM base AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Generate Prisma client
@@ -29,6 +28,10 @@ ENV NODE_ENV production
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
+
+# only here do we use --omit=dev
+COPY package*.json ./
+RUN npm ci --omit=dev --ignore-scripts
 
 COPY --from=builder /app/public ./public
 
