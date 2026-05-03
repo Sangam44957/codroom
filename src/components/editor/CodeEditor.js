@@ -102,15 +102,18 @@ export default function CodeEditor({
 
   // Cleanup style elements when component unmounts or users leave
   useEffect(() => {
+    const styleElements = styleElementsRef.current;
+    const injectedColors = injectedColorsRef.current;
+    
     return () => {
       // Clean up all style elements on unmount
-      styleElementsRef.current.forEach((style) => {
+      styleElements.forEach((style) => {
         if (style.parentNode) {
           style.parentNode.removeChild(style);
         }
       });
-      styleElementsRef.current.clear();
-      injectedColorsRef.current.clear();
+      styleElements.clear();
+      injectedColors.clear();
     };
   }, []);
 

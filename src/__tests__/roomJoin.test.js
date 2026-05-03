@@ -25,8 +25,8 @@ jest.mock("@/services/room.service", () => ({
 const { validateJoinToken } = require("@/services/room.service");
 let joinRoom;
 beforeAll(async () => {
-  const module = await import("@/app/api/rooms/[roomId]/join/route");
-  joinRoom = module.POST;
+  const routeModule = await import("@/app/api/rooms/[roomId]/join/route");
+  joinRoom = routeModule.POST;
 });
 
 // ── Minimal Request factory ───────────────────────────────────────────────────

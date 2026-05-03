@@ -85,6 +85,14 @@ fn test() {
 `,
 };
 
+function getExtension(lang) {
+  const exts = {
+    javascript: "js", typescript: "ts", python: "py", 
+    java: "java", cpp: "cpp", go: "go", rust: "rs"
+  };
+  return exts[lang] || "js";
+}
+
 export default function ScratchPad({ language = "javascript", roomId }) {
   const [files, setFiles] = useState(() => {
     // Try to load from localStorage first
@@ -109,14 +117,6 @@ export default function ScratchPad({ language = "javascript", roomId }) {
   const [lastSaved, setLastSaved] = useState(null);
   const editorRef = useRef(null);
   const saveTimeoutRef = useRef(null);
-
-  function getExtension(lang) {
-    const exts = {
-      javascript: "js", typescript: "ts", python: "py", 
-      java: "java", cpp: "cpp", go: "go", rust: "rs"
-    };
-    return exts[lang] || "js";
-  }
 
   // Auto-save to localStorage
   useEffect(() => {
