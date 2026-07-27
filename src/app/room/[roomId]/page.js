@@ -9,10 +9,8 @@ import ScratchPad from "@/components/editor/ScratchPad";
 import TestCaseRunner from "@/components/editor/TestCaseRunner";
 import ChatPanel from "@/components/ui/ChatPanel";
 import NotesPanel from "@/components/ui/NotesPanel";
-import InterviewTimeline from "@/components/ui/InterviewTimeline";
 import SecurityWarning from "@/components/ui/SecurityWarning";
 import ConnectionQuality from "@/components/ui/ConnectionQuality";
-import AIAssistant from "@/components/ui/AIAssistant";
 import CollabIndicator from "@/components/editor/CollabIndicator";
 import VideoPanel from "@/components/video/VideoPanel";
 import VideoDebug from "@/components/debug/VideoDebug";
@@ -26,14 +24,12 @@ import { useRoomShortcuts, ShortcutHelpModal } from "@/components/room/RoomShort
 import OnboardingTour, { useOnboardingTour } from "@/components/ui/OnboardingTour";
 import { useNavigationGuard, useAutoSave, getAutoSave, clearAutoSave } from "@/hooks/useNavigationGuard";
 import SystemCheck from "@/components/ui/SystemCheck";
-import HintToast from "@/components/ui/HintToast";
-import { useAdaptiveHints } from "@/hooks/useAdaptiveHints";
 import { toast } from "sonner";
 import {
   Play, Square, SkipForward, Wifi, WifiOff, Clock, X,
   MessageSquare, StickyNote, Video, Shield, ChevronLeft,
   ChevronRight, GripVertical, Trash2, LayoutPanelLeft, Lock, Unlock,
-  PenLine, Link2, Maximize2, Minimize2, ListOrdered, Bot, Users,
+  PenLine, Link2, Maximize2, Minimize2,
 } from "lucide-react";
 
 // ── Resizable divider ──────────────────────────────────────────
@@ -87,6 +83,7 @@ export default function RoomPage() {
   const [deleting, setDeleting] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const [collabMode, setCollabMode] = useState(false);
+  const [timerAddInput, setTimerAddInput] = useState("");
   const [aiChatDraft, setAiChatDraft] = useState("");
   const [inviteCopied, setInviteCopied] = useState(false);
   const [needsFullscreenConsent, setNeedsFullscreenConsent] = useState(false);
@@ -127,6 +124,7 @@ export default function RoomPage() {
     onFocusModeChanged, onCollabModeChanged, onWhiteboardDraw, onWhiteboardClear, onRemoteCameraToggle,
     onRemoteMicToggle, onCandidateUnlocked, onRemoteCursor,
   } = useSocket(session.joined ? roomId : null, session.userName, session.role, authToken, session.roomTicket || roomTicket);
+
 
   const {
     interviewId, interviewStatus, setInterviewId, setInterviewStatus,
@@ -473,14 +471,6 @@ export default function RoomPage() {
     onResetLayout: resetLayout,
   });
 
-  // Adaptive hints — interviewer can toggle; candidate receives hints
-  const [hintsEnabled, setHintsEnabled] = useState(false);
-  const { hint, dismissHint } = useAdaptiveHints({
-    enabled: interviewStatus === "in_progress" && session.role === "candidate" && hintsEnabled,
-    output,
-    code: files[activeFile] ?? "",
-    interviewStatus,
-  });
 
   function handleJoin(e) {
     e.preventDefault();
@@ -577,15 +567,13 @@ export default function RoomPage() {
   }
 
   const isInterviewer = session.role === "interviewer";
-  const rightTabs = ["chat", ...(isInterviewer ? ["notes", "timeline", "ai"] : []), "video", "board"];
+  const rightTabs = ["chat", ...(isInterviewer ? ["notes"] : []), "video", "board"];
 
   const TAB_META = {
-    chat:     { icon: MessageSquare, label: "Chat" },
-    notes:    { icon: StickyNote,    label: "Notes" },
-    timeline: { icon: ListOrdered,   label: "Timeline" },
-    ai:       { icon: Bot,           label: "AI" },
-    video:    { icon: Video,         label: "Video" },
-    board:    { icon: PenLine,       label: "Board" },
+    chat:  { icon: MessageSquare, label: "Chat" },
+    notes: { icon: StickyNote,    label: "Notes" },
+    video: { icon: Video,         label: "Video" },
+    board: { icon: PenLine,       label: "Board" },
   };
 
   // Mobile bottom tab state — controls which panel is visible on small screens
@@ -715,21 +703,7 @@ export default function RoomPage() {
           )}
 
           {/* Connection */}
-          {isInterviewer ? (
-            <ConnectionQuality
-              latency={latency}
-              reconnectCount={reconnectCount}
-              isConnected={isConnected}
-              onForceReconnect={forceReconnect}
-            />
-          ) : (
-            <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border ${
-              isConnected ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border-rose-500/20"
-            }`}>
-              {isConnected ? <Wifi size={10} /> : <WifiOff size={10} />}
-              <span className="hidden sm:inline">{isConnected ? "Live" : "Off"}</span>
-            </span>
-          )}
+          <ConnectionQuality isConnected={isConnected} />
 
           {/* Security violation count + unlock button — interviewer only */}
           {isInterviewer && violations.length > 0 && (
@@ -837,13 +811,29 @@ export default function RoomPage() {
                   <Clock size={10} /> {room.template.durationMinutes}m
                 </button>
               )}
-              {[10, 15, 30].map((m) => (
-                <button key={m}
-                  onClick={() => emitTimerExtend(m)}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const mins = parseInt(timerAddInput, 10);
+                  if (mins > 0) { emitTimerExtend(mins); setTimerAddInput(""); }
+                }}
+                className="flex items-center gap-1"
+              >
+                <input
+                  type="number"
+                  min="1"
+                  max="120"
+                  placeholder="min"
+                  value={timerAddInput}
+                  onChange={(e) => setTimerAddInput(e.target.value)}
+                  className="w-14 px-2 py-1 text-xs rounded-md bg-white/[0.04] border border-white/[0.08] text-slate-300 placeholder-slate-600 focus:outline-none focus:border-violet-500/40 transition-all"
+                />
+                <button
+                  type="submit"
                   className="px-2 py-1 text-xs rounded-md bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-emerald-300 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all"
-                  title={`Add ${m} minutes`}
-                >+{m}m</button>
-              ))}
+                  title="Add minutes to timer"
+                >+</button>
+              </form>
               {secondsLeft !== null && (
                 <button
                   onClick={() => emitTimerClear()}
@@ -879,49 +869,6 @@ export default function RoomPage() {
             </button>
           )}
 
-          {/* Hints toggle — interviewer only, during active interview */}
-          {isInterviewer && interviewStatus === "in_progress" && (
-            <button
-              onClick={() => {
-                const next = !hintsEnabled;
-                setHintsEnabled(next);
-                toast(next ? "💡 Adaptive hints ON — candidate may receive hints" : "💡 Adaptive hints OFF");
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md font-semibold transition-all border ${
-                hintsEnabled
-                  ? "bg-amber-500/15 border-amber-500/30 text-amber-300 hover:bg-amber-500/25"
-                  : "bg-white/[0.04] border-white/[0.08] text-slate-400 hover:text-white hover:border-white/[0.16]"
-              }`}
-              title={hintsEnabled ? "Disable adaptive hints" : "Enable adaptive hints for candidate"}
-            >
-              💡 Hints
-            </button>
-          )}
-
-          {/* Collab mode toggle — interviewer only, during active interview */}
-          {isInterviewer && interviewStatus === "in_progress" && (
-            <button
-              onClick={async () => {
-                const next = !collabMode;
-                try {
-                  await emitSetCollabMode(next);
-                  setCollabMode(next);
-                  toast(next ? "👥 Collab mode ON — you can now co-edit" : "👥 Collab mode OFF");
-                } catch (err) {
-                  toast.error(`Failed to toggle collab mode: ${err.message}`);
-                }
-              }}
-              className={`flex items-center gap-1.5 px-3 py-1 text-xs rounded-md font-semibold transition-all border ${
-                collabMode
-                  ? "bg-cyan-500/15 border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25"
-                  : "bg-white/[0.04] border-white/[0.08] text-slate-400 hover:text-white hover:border-white/[0.16]"
-              }`}
-              title={collabMode ? "Disable collaborative editing" : "Enable collaborative editing"}
-            >
-              <Users size={11} />
-              Collab
-            </button>
-          )}
 
           {/* Candidate focus mode indicator */}
           {!isInterviewer && focusMode && (
@@ -1130,7 +1077,6 @@ export default function RoomPage() {
                 messages={messages}
                 onSendMessage={sendMessage}
                 userName={session.userName}
-                isCandidate={!isInterviewer}
                 draft={aiChatDraft}
                 onDraftConsumed={() => setAiChatDraft("")}
               />
@@ -1142,22 +1088,6 @@ export default function RoomPage() {
               </div>
             )}
 
-            {/* Timeline — interviewer only */}
-            {rightTab === "timeline" && isInterviewer && (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <InterviewTimeline events={timelineEvents} messages={messages} />
-              </div>
-            )}
-
-            {/* AI Assistant — interviewer only */}
-            {rightTab === "ai" && isInterviewer && (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                <AIAssistant
-                  messages={messages}
-                  onCopyToChat={(q) => setAiChatDraft(q)}
-                />
-              </div>
-            )}
 
             {/* Video tab: video on top, chat below */}
             <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${
@@ -1180,7 +1110,6 @@ export default function RoomPage() {
                   messages={messages}
                   onSendMessage={sendMessage}
                   userName={session.userName}
-                  isCandidate={!isInterviewer}
                 />
               </div>
             </div>
@@ -1243,7 +1172,6 @@ export default function RoomPage() {
 
       <ShortcutHelpModal open={showShortcutModal} onClose={() => setShowShortcutModal(false)} />
       {showTour && <OnboardingTour onComplete={completeTour} />}
-      <HintToast hint={hint} onDismiss={dismissHint} />
 
       {/* Leave confirmation modal */}
       {showLeaveModal && (

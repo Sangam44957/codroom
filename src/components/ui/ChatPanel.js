@@ -81,7 +81,7 @@ export default function ChatPanel({ messages, onSendMessage, userName, isCandida
           const isMe = msg.sender === userName;
           return (
             <div key={msg.id} className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}>
-              <div className="flex items-center gap-1.5 mb-1">
+              <div className={`flex items-center gap-1.5 mb-1 ${isMe ? "flex-row-reverse" : ""}`}>
                 <span className={`text-xs font-medium ${
                   msg.role === "interviewer" ? "text-violet-400" : "text-cyan-400"
                 }`}>{isMe ? "You" : msg.sender}</span>
