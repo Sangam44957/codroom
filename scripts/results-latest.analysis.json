@@ -1,0 +1,962 @@
+{
+  "sourceFile": "scripts/results-latest.json",
+  "parse": {
+    "lineCount": 814837,
+    "parseErrors": 0,
+    "firstTime": "2026-04-17T13:46:39.632Z",
+    "lastTime": "2026-04-17T13:48:48.640Z",
+    "durationSec": 129.008
+  },
+  "metricDefinitions": {
+    "vus": {
+      "type": "gauge",
+      "contains": "default",
+      "thresholds": []
+    },
+    "vus_max": {
+      "type": "gauge",
+      "contains": "default",
+      "thresholds": []
+    },
+    "http_reqs": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "http_req_duration": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": [
+        "p(95)<300"
+      ]
+    },
+    "http_req_blocked": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_tls_handshaking": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_sending": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_waiting": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_receiving": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "http_req_failed": {
+      "type": "rate",
+      "contains": "default",
+      "thresholds": [
+        "rate<0.01"
+      ]
+    },
+    "checks": {
+      "type": "rate",
+      "contains": "default",
+      "thresholds": []
+    },
+    "data_sent": {
+      "type": "counter",
+      "contains": "data",
+      "thresholds": []
+    },
+    "data_received": {
+      "type": "counter",
+      "contains": "data",
+      "thresholds": []
+    },
+    "iteration_duration": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "iterations": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "ws_sessions": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "ws_connecting": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "ws_connects": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "ws_msgs_sent": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "ws_msgs_received": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "ws_errors": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": [
+        "count<5"
+      ]
+    },
+    "ws_session_duration": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": []
+    },
+    "ws_connect_success": {
+      "type": "rate",
+      "contains": "default",
+      "thresholds": [
+        "rate>0.95"
+      ]
+    },
+    "ws_code_changes_sent": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "dropped_iterations": {
+      "type": "counter",
+      "contains": "default",
+      "thresholds": []
+    },
+    "exec_duration_ms": {
+      "type": "trend",
+      "contains": "time",
+      "thresholds": [
+        "p(95)<8000"
+      ]
+    }
+  },
+  "vus": {
+    "firstVuActiveTime": "2026-04-17T13:46:41.632Z",
+    "maxObserved": 40,
+    "maxObservedTime": "2026-04-17T13:47:03.632Z"
+  },
+  "global": {
+    "httpReqs": 959,
+    "httpFailedRate": 0.3086548488008342,
+    "httpLatencyMs": {
+      "count": 959,
+      "min": 0,
+      "max": 12027.1529,
+      "mean": 204.76176767466106,
+      "p50": 21.6278,
+      "p95": 316.6913,
+      "p99": 12018.9534
+    },
+    "statusCounts": {
+      "0": 79,
+      "200": 663,
+      "429": 74,
+      "500": 6,
+      "503": 137
+    },
+    "wsSessions": 80232,
+    "wsStatusCounts": {
+      "101": 16203,
+      "unknown": 64029
+    },
+    "wsSessionLatencyMs": {
+      "count": 80231,
+      "min": 2.2959,
+      "max": 45053.4856,
+      "mean": 22.260975450885354,
+      "p50": 24.0556,
+      "p95": 29.8573,
+      "p99": 35.2136
+    },
+    "wsConnectingLatencyMs": {
+      "count": 80232,
+      "min": 1.0538,
+      "max": 98.669,
+      "mean": 20.915351810998022,
+      "p50": 24.0209,
+      "p95": 29.7542,
+      "p99": 34.8035
+    },
+    "wsErrors": 16202,
+    "wsConnects": 16203,
+    "wsConnectSuccessRate": 0.20194189278458452,
+    "execLatencyMs": {
+      "count": 153,
+      "min": 15,
+      "max": 12032,
+      "mean": 962.9934640522875,
+      "p50": 138,
+      "p95": 12023,
+      "p99": 12026
+    },
+    "iterationsByScenario": {
+      "api_browse": 200,
+      "room_session": 80231,
+      "interview_lifecycle": 6,
+      "code_execution": 153
+    },
+    "droppedIterationsByScenario": {
+      "code_execution": 27
+    }
+  },
+  "thresholds": {
+    "configured": {
+      "http_req_duration": "p(95)<600",
+      "http_req_failed": "rate<0.02",
+      "ws_errors": "count<10",
+      "ws_connect_success": "rate>0.90",
+      "exec_duration_ms": "p(95)<11000"
+    },
+    "actual": {
+      "http_req_duration_p95": 316.6913,
+      "http_req_failed_rate": 0.3086548488008342,
+      "ws_errors_count": 16202,
+      "ws_connect_success_rate": 0.20194189278458452,
+      "exec_duration_ms_p95": 12023
+    },
+    "passFail": {
+      "http_req_duration": true,
+      "http_req_failed": false,
+      "ws_errors": false,
+      "ws_connect_success": false,
+      "exec_duration_ms": false
+    }
+  },
+  "scenarios": {
+    "unscoped": {
+      "firstTime": "2026-04-17T13:46:39.632Z",
+      "lastTime": "2026-04-17T13:48:48.632Z",
+      "durationSec": 129,
+      "iterations": 0,
+      "droppedIterations": 0,
+      "httpReqs": 0,
+      "httpFailRate": null,
+      "httpLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "statusCounts": {},
+      "endpointStatus": {},
+      "checks": {},
+      "wsSessions": 0,
+      "wsStatus": {},
+      "wsSessionLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsConnectSuccessRate": null,
+      "wsErrors": 0,
+      "wsConnects": 0,
+      "execLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsMsgsSent": 0,
+      "wsMsgsReceived": 0,
+      "dataSentBytes": 0,
+      "dataReceivedBytes": 0
+    },
+    "api_browse": {
+      "firstTime": "2026-04-17T13:46:41.962Z",
+      "lastTime": "2026-04-17T13:48:09.130Z",
+      "durationSec": 87.168,
+      "iterations": 200,
+      "droppedIterations": 0,
+      "httpReqs": 800,
+      "httpFailRate": 0.17125,
+      "httpLatencyMs": {
+        "count": 800,
+        "min": 6.4376,
+        "max": 1310.8023,
+        "mean": 61.09634975,
+        "p50": 21.258,
+        "p95": 302.0014,
+        "p99": 398.867
+      },
+      "statusCounts": {
+        "200": 663,
+        "503": 137
+      },
+      "endpointStatus": {
+        "/api/problems": {
+          "200": 200
+        },
+        "/api/rooms": {
+          "200": 200
+        },
+        "/api/analytics": {
+          "200": 200
+        },
+        "/api/health": {
+          "200": 63,
+          "503": 137
+        }
+      },
+      "checks": {
+        "problems 200": {
+          "pass": 200,
+          "fail": 0
+        },
+        "rooms 200": {
+          "pass": 200,
+          "fail": 0
+        },
+        "analytics 200": {
+          "pass": 200,
+          "fail": 0
+        },
+        "health 200": {
+          "pass": 63,
+          "fail": 137
+        }
+      },
+      "wsSessions": 0,
+      "wsStatus": {},
+      "wsSessionLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsConnectSuccessRate": null,
+      "wsErrors": 0,
+      "wsConnects": 0,
+      "execLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsMsgsSent": 0,
+      "wsMsgsReceived": 0,
+      "dataSentBytes": 243200,
+      "dataReceivedBytes": 4882305
+    },
+    "room_session": {
+      "firstTime": "2026-04-17T13:46:48.642Z",
+      "lastTime": "2026-04-17T13:48:48.640Z",
+      "durationSec": 119.998,
+      "iterations": 80231,
+      "droppedIterations": 0,
+      "httpReqs": 0,
+      "httpFailRate": null,
+      "httpLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "statusCounts": {},
+      "endpointStatus": {},
+      "checks": {
+        "ws connected": {
+          "pass": 16202,
+          "fail": 64029
+        }
+      },
+      "wsSessions": 80232,
+      "wsStatus": {
+        "101": 16203,
+        "unknown": 64029
+      },
+      "wsSessionLatencyMs": {
+        "count": 80231,
+        "min": 2.2959,
+        "max": 45053.4856,
+        "mean": 22.260975450885354,
+        "p50": 24.0556,
+        "p95": 29.8573,
+        "p99": 35.2136
+      },
+      "wsConnectSuccessRate": 0.20194189278458452,
+      "wsErrors": 16202,
+      "wsConnects": 16203,
+      "execLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsMsgsSent": 32448,
+      "wsMsgsReceived": 16214,
+      "dataSentBytes": 12640247,
+      "dataReceivedBytes": 5608009
+    },
+    "interview_lifecycle": {
+      "firstTime": "2026-04-17T13:46:53.938Z",
+      "lastTime": "2026-04-17T13:46:54.447Z",
+      "durationSec": 0.509,
+      "iterations": 6,
+      "droppedIterations": 0,
+      "httpReqs": 6,
+      "httpFailRate": 1,
+      "httpLatencyMs": {
+        "count": 6,
+        "min": 289.0179,
+        "max": 462.7501,
+        "mean": 347.4957833333333,
+        "p50": 309.492,
+        "p95": 462.7501,
+        "p99": 462.7501
+      },
+      "statusCounts": {
+        "500": 6
+      },
+      "endpointStatus": {
+        "/api/rooms": {
+          "500": 6
+        }
+      },
+      "checks": {
+        "create room 201": {
+          "pass": 0,
+          "fail": 6
+        }
+      },
+      "wsSessions": 0,
+      "wsStatus": {},
+      "wsSessionLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsConnectSuccessRate": null,
+      "wsErrors": 0,
+      "wsConnects": 0,
+      "execLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsMsgsSent": 0,
+      "wsMsgsReceived": 0,
+      "dataSentBytes": 2706,
+      "dataReceivedBytes": 6546
+    },
+    "code_execution": {
+      "firstTime": "2026-04-17T13:47:00.306Z",
+      "lastTime": "2026-04-17T13:47:58.330Z",
+      "durationSec": 58.024,
+      "iterations": 153,
+      "droppedIterations": 27,
+      "httpReqs": 153,
+      "httpFailRate": 1,
+      "httpLatencyMs": {
+        "count": 153,
+        "min": 0,
+        "max": 12027.1529,
+        "mean": 950.3560830065359,
+        "p50": 138.0721,
+        "p95": 12019.4567,
+        "p99": 12021.8142
+      },
+      "statusCounts": {
+        "0": 79,
+        "429": 74
+      },
+      "endpointStatus": {
+        "/api/execute": {
+          "0": 79,
+          "429": 74
+        }
+      },
+      "checks": {
+        "exec 200": {
+          "pass": 0,
+          "fail": 153
+        },
+        "exec has output": {
+          "pass": 0,
+          "fail": 153
+        }
+      },
+      "wsSessions": 0,
+      "wsStatus": {},
+      "wsSessionLatencyMs": {
+        "count": 0,
+        "min": null,
+        "max": null,
+        "mean": null,
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "wsConnectSuccessRate": null,
+      "wsErrors": 0,
+      "wsConnects": 0,
+      "execLatencyMs": {
+        "count": 153,
+        "min": 15,
+        "max": 12032,
+        "mean": 962.9934640522875,
+        "p50": 138,
+        "p95": 12023,
+        "p99": 12026
+      },
+      "wsMsgsSent": 0,
+      "wsMsgsReceived": 0,
+      "dataSentBytes": 49810,
+      "dataReceivedBytes": 86552
+    }
+  },
+  "endpoints": [
+    {
+      "endpoint": "/api/rooms",
+      "total": 206,
+      "statusCounts": {
+        "200": 200,
+        "500": 6
+      },
+      "failRate": 0.02912621359223301,
+      "latencyMs": {
+        "count": 206,
+        "min": 6.4376,
+        "max": 462.7501,
+        "mean": 32.334958252427185,
+        "p50": 17.1035,
+        "p95": 83.1487,
+        "p99": 334.2528
+      }
+    },
+    {
+      "endpoint": "/api/problems",
+      "total": 200,
+      "statusCounts": {
+        "200": 200
+      },
+      "failRate": 0,
+      "latencyMs": {
+        "count": 200,
+        "min": 7.018,
+        "max": 1310.8023,
+        "mean": 31.260156000000002,
+        "p50": 17.8654,
+        "p95": 76.5587,
+        "p99": 114.1081
+      }
+    },
+    {
+      "endpoint": "/api/analytics",
+      "total": 200,
+      "statusCounts": {
+        "200": 200
+      },
+      "failRate": 0,
+      "latencyMs": {
+        "count": 200,
+        "min": 6.942,
+        "max": 145.7582,
+        "mean": 23.451974500000002,
+        "p50": 16.8708,
+        "p95": 61.6326,
+        "p99": 106.6144
+      }
+    },
+    {
+      "endpoint": "/api/health",
+      "total": 200,
+      "statusCounts": {
+        "200": 63,
+        "503": 137
+      },
+      "failRate": 0.685,
+      "latencyMs": {
+        "count": 200,
+        "min": 37.2318,
+        "max": 1200.3335,
+        "mean": 166.79313499999992,
+        "p50": 99.8011,
+        "p95": 389.1277,
+        "p99": 612.4103
+      }
+    },
+    {
+      "endpoint": "/api/execute",
+      "total": 153,
+      "statusCounts": {
+        "0": 79,
+        "429": 74
+      },
+      "failRate": 1,
+      "latencyMs": {
+        "count": 153,
+        "min": 0,
+        "max": 12027.1529,
+        "mean": 950.3560830065359,
+        "p50": 138.0721,
+        "p95": 12019.4567,
+        "p99": 12021.8142
+      }
+    }
+  ],
+  "checks": [
+    {
+      "check": "ws connected",
+      "pass": 16202,
+      "fail": 64029,
+      "failRate": 0.7980581072154155,
+      "byScenario": {
+        "room_session": {
+          "pass": 16202,
+          "fail": 64029
+        }
+      }
+    },
+    {
+      "check": "exec 200",
+      "pass": 0,
+      "fail": 153,
+      "failRate": 1,
+      "byScenario": {
+        "code_execution": {
+          "pass": 0,
+          "fail": 153
+        }
+      }
+    },
+    {
+      "check": "exec has output",
+      "pass": 0,
+      "fail": 153,
+      "failRate": 1,
+      "byScenario": {
+        "code_execution": {
+          "pass": 0,
+          "fail": 153
+        }
+      }
+    },
+    {
+      "check": "health 200",
+      "pass": 63,
+      "fail": 137,
+      "failRate": 0.685,
+      "byScenario": {
+        "api_browse": {
+          "pass": 63,
+          "fail": 137
+        }
+      }
+    },
+    {
+      "check": "create room 201",
+      "pass": 0,
+      "fail": 6,
+      "failRate": 1,
+      "byScenario": {
+        "interview_lifecycle": {
+          "pass": 0,
+          "fail": 6
+        }
+      }
+    },
+    {
+      "check": "problems 200",
+      "pass": 200,
+      "fail": 0,
+      "failRate": 0,
+      "byScenario": {
+        "api_browse": {
+          "pass": 200,
+          "fail": 0
+        }
+      }
+    },
+    {
+      "check": "rooms 200",
+      "pass": 200,
+      "fail": 0,
+      "failRate": 0,
+      "byScenario": {
+        "api_browse": {
+          "pass": 200,
+          "fail": 0
+        }
+      }
+    },
+    {
+      "check": "analytics 200",
+      "pass": 200,
+      "fail": 0,
+      "failRate": 0,
+      "byScenario": {
+        "api_browse": {
+          "pass": 200,
+          "fail": 0
+        }
+      }
+    }
+  ],
+  "timeline": {
+    "firstMetricSeen": {
+      "vus": 1776433599632,
+      "vus_max": 1776433599632,
+      "http_reqs": 1776433601962,
+      "http_req_duration": 1776433601962,
+      "http_req_blocked": 1776433601962,
+      "http_req_connecting": 1776433601962,
+      "http_req_tls_handshaking": 1776433601962,
+      "http_req_sending": 1776433601962,
+      "http_req_waiting": 1776433601962,
+      "http_req_receiving": 1776433601962,
+      "http_req_failed": 1776433601962,
+      "checks": 1776433601964,
+      "data_sent": 1776433606638,
+      "data_received": 1776433606638,
+      "iteration_duration": 1776433606638,
+      "iterations": 1776433606638,
+      "ws_sessions": 1776433608642,
+      "ws_connecting": 1776433608642,
+      "ws_connects": 1776433608655,
+      "ws_msgs_sent": 1776433608656,
+      "ws_msgs_received": 1776433608656,
+      "ws_errors": 1776433608662,
+      "ws_session_duration": 1776433608642,
+      "ws_connect_success": 1776433608662,
+      "ws_code_changes_sent": 1776433617892,
+      "dropped_iterations": 1776433620306,
+      "exec_duration_ms": 1776433630664
+    },
+    "firstStatusSeen": {
+      "0": "2026-04-17T13:47:10.663Z",
+      "200": "2026-04-17T13:46:41.962Z",
+      "429": "2026-04-17T13:47:11.441Z",
+      "500": "2026-04-17T13:46:53.938Z",
+      "503": "2026-04-17T13:47:05.404Z"
+    },
+    "firstScenarioSeen": {
+      "api_browse": "2026-04-17T13:46:41.962Z",
+      "room_session": "2026-04-17T13:46:48.642Z",
+      "interview_lifecycle": "2026-04-17T13:46:53.938Z",
+      "code_execution": "2026-04-17T13:47:00.306Z"
+    },
+    "firstCheckFailure": {
+      "create room 201": "2026-04-17T13:46:53.939Z",
+      "ws connected": "2026-04-17T13:46:57.625Z",
+      "health 200": "2026-04-17T13:47:05.404Z",
+      "exec 200": "2026-04-17T13:47:10.664Z",
+      "exec has output": "2026-04-17T13:47:10.664Z"
+    },
+    "firstHealth503": "2026-04-17T13:47:05.404Z",
+    "firstWsStatus0": null,
+    "firstWsStatus101": "2026-04-17T13:46:48.642Z",
+    "firstWsConnectFailure": "2026-04-17T13:46:57.625Z"
+  },
+  "noisyBuckets": [
+    {
+      "time": "2026-04-17T13:47:20.000Z",
+      "reqs": 73,
+      "fails": 33,
+      "s0": 8,
+      "s429": 9,
+      "s503": 16,
+      "health503": 16,
+      "wsStatus0": 0,
+      "wsConnectFail": 4048,
+      "wsErrors": 3,
+      "failRate": 0.4520547945205479
+    },
+    {
+      "time": "2026-04-17T13:47:30.000Z",
+      "reqs": 69,
+      "fails": 31,
+      "s0": 8,
+      "s429": 8,
+      "s503": 15,
+      "health503": 15,
+      "wsStatus0": 0,
+      "wsConnectFail": 4013,
+      "wsErrors": 0,
+      "failRate": 0.4492753623188406
+    },
+    {
+      "time": "2026-04-17T13:47:40.000Z",
+      "reqs": 69,
+      "fails": 30,
+      "s0": 8,
+      "s429": 8,
+      "s503": 14,
+      "health503": 14,
+      "wsStatus0": 0,
+      "wsConnectFail": 4129,
+      "wsErrors": 10,
+      "failRate": 0.43478260869565216
+    },
+    {
+      "time": "2026-04-17T13:48:05.000Z",
+      "reqs": 7,
+      "fails": 3,
+      "s0": 0,
+      "s429": 0,
+      "s503": 3,
+      "health503": 3,
+      "wsStatus0": 0,
+      "wsConnectFail": 4047,
+      "wsErrors": 6,
+      "failRate": 0.42857142857142855
+    },
+    {
+      "time": "2026-04-17T13:47:50.000Z",
+      "reqs": 71,
+      "fails": 30,
+      "s0": 8,
+      "s429": 8,
+      "s503": 14,
+      "health503": 14,
+      "wsStatus0": 0,
+      "wsConnectFail": 4021,
+      "wsErrors": 0,
+      "failRate": 0.4225352112676056
+    },
+    {
+      "time": "2026-04-17T13:47:25.000Z",
+      "reqs": 63,
+      "fails": 26,
+      "s0": 7,
+      "s429": 7,
+      "s503": 12,
+      "health503": 12,
+      "wsStatus0": 0,
+      "wsConnectFail": 4006,
+      "wsErrors": 3,
+      "failRate": 0.4126984126984127
+    },
+    {
+      "time": "2026-04-17T13:47:45.000Z",
+      "reqs": 72,
+      "fails": 29,
+      "s0": 7,
+      "s429": 7,
+      "s503": 15,
+      "health503": 15,
+      "wsStatus0": 0,
+      "wsConnectFail": 4023,
+      "wsErrors": 0,
+      "failRate": 0.4027777777777778
+    },
+    {
+      "time": "2026-04-17T13:47:55.000Z",
+      "reqs": 61,
+      "fails": 23,
+      "s0": 5,
+      "s429": 5,
+      "s503": 13,
+      "health503": 13,
+      "wsStatus0": 0,
+      "wsConnectFail": 4085,
+      "wsErrors": 0,
+      "failRate": 0.3770491803278688
+    },
+    {
+      "time": "2026-04-17T13:47:35.000Z",
+      "reqs": 72,
+      "fails": 26,
+      "s0": 7,
+      "s429": 7,
+      "s503": 12,
+      "health503": 12,
+      "wsStatus0": 0,
+      "wsConnectFail": 4072,
+      "wsErrors": 0,
+      "failRate": 0.3611111111111111
+    },
+    {
+      "time": "2026-04-17T13:47:10.000Z",
+      "reqs": 70,
+      "fails": 25,
+      "s0": 13,
+      "s429": 7,
+      "s503": 5,
+      "health503": 5,
+      "wsStatus0": 0,
+      "wsConnectFail": 4024,
+      "wsErrors": 1,
+      "failRate": 0.35714285714285715
+    },
+    {
+      "time": "2026-04-17T13:47:15.000Z",
+      "reqs": 70,
+      "fails": 24,
+      "s0": 8,
+      "s429": 8,
+      "s503": 8,
+      "health503": 8,
+      "wsStatus0": 0,
+      "wsConnectFail": 4003,
+      "wsErrors": 6,
+      "failRate": 0.34285714285714286
+    },
+    {
+      "time": "2026-04-17T13:48:00.000Z",
+      "reqs": 38,
+      "fails": 7,
+      "s0": 0,
+      "s429": 0,
+      "s503": 7,
+      "health503": 7,
+      "wsStatus0": 0,
+      "wsConnectFail": 4061,
+      "wsErrors": 3,
+      "failRate": 0.18421052631578946
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+import { Inter, Syne, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+import { Toaster } from "sonner";
+import ErrorBoundary from "@/components/ui/ErrorBoundary";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const syne = Syne({ subsets: ["latin"], variable: "--font-display", weight: ["700", "800"] });
+const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-mono", weight: ["400", "500", "600"] });
+
+export const metadata = {
+  title: "CodRoom",
+  description: "Technical interviews, powered by AI",
+};
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en" data-scroll-behavior="smooth">
+      <body className={`${inter.variable} ${syne.variable} ${jetbrainsMono.variable} antialiased`} suppressHydrationWarning={true}>
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
+        <Toaster
+          theme="dark"
+          position="bottom-right"
+          toastOptions={{
+            style: {
+              background: "rgba(10, 8, 24, 0.95)",
+              border: "1px solid rgba(255,255,255,0.07)",
+              backdropFilter: "blur(12px)",
+              color: "white",
+            },
+          }}
+        />
+      </body>
+    </html>
+  );
+}

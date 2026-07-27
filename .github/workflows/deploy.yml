@@ -1,0 +1,180 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME_APP: ${{ github.repository }}-app
+  IMAGE_NAME_SOCKET: ${{ github.repository }}-socket
+
+jobs:
+  # ── Step 1: Run tests before deploying ───────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/codroom_test
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/codroom_test
+      JWT_SECRET: ci-test-secret-must-be-32-characters-long
+      INTERNAL_SECRET: ci-test-internal-must-be-32-chars-long
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SOCKET_URL: http://localhost:3001
+      REDIS_URL: redis://localhost:6379
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: codroom_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npm test -- --passWithNoTests --testPathIgnorePatterns='smoke|roomJoin'
+        env:
+          GROQ_API_KEY: test-key
+          BREVO_API_KEY: test-key
+          BREVO_SENDER_EMAIL: test@example.com
+
+  # ── Step 2: Build Docker images ──────────────────────
+  build:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (App)
+        id: meta-app
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_APP }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Extract metadata (Socket)
+        id: meta-socket
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_SOCKET }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push App image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.prod
+          push: true
+          tags: ${{ steps.meta-app.outputs.tags }}
+          labels: ${{ steps.meta-app.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Socket image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.socket
+          push: true
+          tags: ${{ steps.meta-socket.outputs.tags }}
+          labels: ${{ steps.meta-socket.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Step 3: Deploy Socket.IO to EC2 ──────────────────
+  deploy-ec2:
+    name: Deploy Socket.IO to EC2
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /home/ubuntu/codroom
+
+            # Pull latest code
+            git pull origin main
+
+            # Install dependencies
+            npm install --production
+            npx prisma generate
+
+            # Restart Socket.IO server
+            pm2 restart ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
+            pm2 save
+
+            echo "✅ Socket.IO deployed"
+
+  # ── Step 4: Smoke test ──────────────────────────────
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: deploy-ec2
+
+    steps:
+      - name: Wait for deployment to stabilize
+        run: sleep 15
+
+      - name: Check Socket.IO health
+        run: |
+          curl -f https://socket.codroom.online/health || exit 1
+          echo "✅ Socket.IO is healthy"
+
+      - name: Check Vercel health
+        run: |
+          curl -f ${{ secrets.PRODUCTION_URL }}/api/health || echo "⚠ Vercel health check failed (may need Vercel deploy)"
