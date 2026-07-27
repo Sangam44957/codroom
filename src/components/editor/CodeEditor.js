@@ -2,8 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import Editor from "@monaco-editor/react";
-import { ChevronDown, Plus, X, Braces } from "lucide-react";
-import SnippetLibrary from "./SnippetLibrary";
+import { ChevronDown, Plus, X } from "lucide-react";
 
 const LANGUAGE_CONFIG = {
   javascript: { label: "JavaScript", ext: "js",   defaultCode: `// Welcome to CodRoom\n\nfunction solution() {\n  \n}\n` },
@@ -51,7 +50,6 @@ export default function CodeEditor({
   onEditorMount,       // (focusFn) => void  — called with editor.focus bound
 }) {
   const [editorReady, setEditorReady] = useState(false);
-  const [showSnippets, setShowSnippets] = useState(false);
   const langColor = LANG_COLORS[language] || "#888";
   const filenames = Object.keys(files ?? {});
 
@@ -181,12 +179,6 @@ export default function CodeEditor({
       onRunCode?.();
     });
 
-    // Ctrl+Shift+S → snippet library
-    editor.addCommand(
-      monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyS,
-      () => setShowSnippets((v) => !v),
-    );
-
     // Emit cursor position on every cursor change
     editor.onDidChangeCursorPosition((e) => {
       onCursorChange?.(e.position.lineNumber, e.position.column);
@@ -248,13 +240,6 @@ export default function CodeEditor({
             <Plus size={13} />
           </button>
 
-          <button
-            onClick={() => setShowSnippets((v) => !v)}
-            className="flex-shrink-0 px-2 py-2 text-slate-600 hover:text-violet-400 hover:bg-white/[0.04] transition-colors"
-            title="Snippet library (Ctrl+Shift+S)"
-          >
-            <Braces size={13} />
-          </button>
         </div>
 
         <div className="flex items-center gap-3 px-3 flex-shrink-0">
@@ -277,20 +262,6 @@ export default function CodeEditor({
           </span>
         </div>
       </div>
-
-      {showSnippets && (
-        <SnippetLibrary
-          language={language}
-          onInsert={(code) => {
-            const editor = editorRef.current;
-            if (!editor) return;
-            const selection = editor.getSelection();
-            editor.executeEdits("", [{ range: selection, text: code }]);
-            editor.focus();
-          }}
-          onClose={() => setShowSnippets(false)}
-        />
-      )}
 
       {/* Monaco */}
       <div className="flex-1 min-h-0">

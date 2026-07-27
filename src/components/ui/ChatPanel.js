@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, HelpCircle } from "lucide-react";
+import { Send } from "lucide-react";
 import { sanitizeChatMessage } from "@/lib/sanitize";
 
 // Collapse consecutive system messages about the same person into one
@@ -19,7 +19,7 @@ function collapseSystemMessages(messages) {
   return result;
 }
 
-export default function ChatPanel({ messages, onSendMessage, userName, isCandidate = false, draft = "", onDraftConsumed }) {
+export default function ChatPanel({ messages, onSendMessage, userName, draft = "", onDraftConsumed }) {
   const [text, setText] = useState("");
   const messagesEndRef = useRef(null);
 
@@ -42,10 +42,6 @@ export default function ChatPanel({ messages, onSendMessage, userName, isCandida
       onSendMessage(text);
       setText("");
     }
-  }
-
-  function handleRequestHint() {
-    onSendMessage("💡 [Hint Request] Could I get a hint on the current problem?");
   }
 
   function formatTime(timestamp) {
@@ -101,16 +97,7 @@ export default function ChatPanel({ messages, onSendMessage, userName, isCandida
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSend} className="flex-shrink-0 px-3 py-3 border-t border-white/[0.06] space-y-2">
-        {isCandidate && (
-          <button
-            type="button"
-            onClick={handleRequestHint}
-            className="w-full flex items-center justify-center gap-1.5 py-1.5 text-xs rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 hover:bg-amber-500/20 transition-all"
-          >
-            <HelpCircle size={12} /> Request Hint
-          </button>
-        )}
+      <form onSubmit={handleSend} className="flex-shrink-0 px-3 py-3 border-t border-white/[0.06]">
         <div className="flex gap-2">
           <input
             type="text"
