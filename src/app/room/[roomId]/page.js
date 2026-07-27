@@ -91,6 +91,7 @@ export default function RoomPage() {
   const [inviteCopied, setInviteCopied] = useState(false);
   const [needsFullscreenConsent, setNeedsFullscreenConsent] = useState(false);
   const [localWarningCount, setLocalWarningCount] = useState(0);
+  const localWarningCountRef = useRef(0);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [mobileTab, setMobileTab] = useState("editor");
   const editorFocusRef = useRef(null);
@@ -140,7 +141,7 @@ export default function RoomPage() {
   const { violations, warningCount, isLocked, unlock, requestFullscreen } = useSecurityMonitor(
     focusMode && session.role === "candidate",
     // Send detailed violation info to interviewer via chat
-    (violation) => {
+    useCallback((violation) => {
       const violationMessages = {
         tab_switch: "🚨 Candidate switched to another tab",
         window_blur: "⚠️ Candidate clicked outside browser window", 
@@ -153,12 +154,13 @@ export default function RoomPage() {
         external_script: "🛡️ Blocked external script injection"
       };
       const message = violationMessages[violation.type] || `🚨 Security violation: ${violation.type}`;
-      sendMessage(`${message} (Warning #${warningCount + 1})`);
-      setLocalWarningCount(warningCount + 1);
-    },
-    (count) => {
+      localWarningCountRef.current += 1;
+      sendMessage(`${message} (Warning #${localWarningCountRef.current})`);
+      setLocalWarningCount(localWarningCountRef.current);
+    }, [sendMessage]),
+    useCallback((count) => {
       sendMessage(`🔒 Session locked after ${count} security violations. Click "Unlock" to restore access.`);
-    }
+    }, [sendMessage])
   );
 
   // Define all callbacks at the top level to avoid conditional hook calls
