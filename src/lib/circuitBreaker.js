@@ -183,8 +183,8 @@ export class CircuitBreaker {
 
 export const groqBreaker = new CircuitBreaker("groq-ai", {
   failureThreshold: 5,
-  resetTimeoutMs:   120_000,
-  failureWindowMs:  120_000,
+  resetTimeoutMs:   30_000,
+  failureWindowMs:  30_000,
 });
 
 export const dockerBreaker = new CircuitBreaker("code-execution", {

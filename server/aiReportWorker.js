@@ -26,45 +26,32 @@ class AIReportWorker {
   }
 
   async processAIReport(jobData) {
-    const { interviewId, roomId, code, problems, rubricScores, customPrompt } = jobData;
-    
+    const { interviewId, code, language, problems, duration, testResults } = jobData;
+
     logger.info(`Processing AI report for interview ${interviewId}`);
-    
+
     try {
-      // Update status to processing
-      await updateInterview(interviewId, {
-        aiReportStatus: 'PROCESSING'
-      });
+      const evaluation = await evaluateCode({ code, language, problems, duration, testResults });
 
-      // Generate AI report
-      const aiReport = await evaluateCode({
-        code,
-        problems,
-        rubricScores,
-        customPrompt
-      });
-
-      // Save report to database
       await createReport({
         interviewId,
-        content: aiReport,
-        generatedAt: new Date()
+        correctness: evaluation.correctness,
+        codeQuality: evaluation.codeQuality,
+        timeComplexity: evaluation.timeComplexity,
+        spaceComplexity: evaluation.spaceComplexity,
+        edgeCaseHandling: evaluation.edgeCaseHandling,
+        overallScore: evaluation.overallScore,
+        recommendation: evaluation.recommendation,
+        summary: `${evaluation.summary}\n\n**Strengths:**\n${evaluation.strengths}\n\n**Weaknesses:**\n${evaluation.weaknesses}`,
+        improvements: evaluation.improvements,
       });
 
-      // Update interview status
-      await updateInterview(interviewId, {
-        aiReportStatus: 'COMPLETED'
-      });
+      await updateInterview(interviewId, { status: 'evaluated' });
 
       logger.info(`AI report completed for interview ${interviewId}`);
-      
     } catch (error) {
       logger.error(`AI report generation failed for interview ${interviewId}:`, error);
-      
-      await updateInterview(interviewId, {
-        aiReportStatus: 'FAILED'
-      });
-      
+      await updateInterview(interviewId, { status: 'completed' });
       throw error;
     }
   }

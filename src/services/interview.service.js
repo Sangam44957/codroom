@@ -172,6 +172,20 @@ export async function generateReport(interviewId, options = {}) {
         ? interview.room.problems.map((rp) => rp.problem)
         : interview.room.problem ? [interview.room.problem] : [];
 
+      let testResults = null;
+      const primaryProblem = allProblems[0] || null;
+      if (primaryProblem?.testCases?.length) {
+        try {
+          testResults = await runTestsForReport(
+            interview.finalCode,
+            interview.language,
+            primaryProblem.testCases
+          );
+        } catch (e) {
+          logger.warn({ err: e, interviewId }, "test runner failed, proceeding without results");
+        }
+      }
+
       await jobQueue.connect();
       const jobId = await jobQueue.addJob('ai-reports', {
         interviewId,
@@ -179,7 +193,8 @@ export async function generateReport(interviewId, options = {}) {
         code: interview.finalCode,
         language: interview.language,
         problems: allProblems,
-        duration: interview.duration
+        duration: interview.duration,
+        testResults,
       });
 
       return { jobId, queued: true, status: "generating" };
