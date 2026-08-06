@@ -167,25 +167,25 @@ export async function generateReport(interviewId, options = {}) {
       return { error: "Unable to generate report at this time", status: 400 };
     }
 
-    try {
-      const allProblems = interview.room.problems?.length
-        ? interview.room.problems.map((rp) => rp.problem)
-        : interview.room.problem ? [interview.room.problem] : [];
+    const allProblems = interview.room.problems?.length
+      ? interview.room.problems.map((rp) => rp.problem)
+      : interview.room.problem ? [interview.room.problem] : [];
 
-      let testResults = null;
-      const primaryProblem = allProblems[0] || null;
-      if (primaryProblem?.testCases?.length) {
-        try {
-          testResults = await runTestsForReport(
-            interview.finalCode,
-            interview.language,
-            primaryProblem.testCases
-          );
-        } catch (e) {
-          logger.warn({ err: e, interviewId }, "test runner failed, proceeding without results");
-        }
+    let testResults = null;
+    const primaryProblem = allProblems[0] || null;
+    if (primaryProblem?.testCases?.length) {
+      try {
+        testResults = await runTestsForReport(
+          interview.finalCode,
+          interview.language,
+          primaryProblem.testCases
+        );
+      } catch (e) {
+        logger.warn({ err: e, interviewId }, "test runner failed, proceeding without results");
       }
+    }
 
+    try {
       await jobQueue.connect();
       const jobId = await jobQueue.addJob('ai-reports', {
         interviewId,
@@ -196,13 +196,15 @@ export async function generateReport(interviewId, options = {}) {
         duration: interview.duration,
         testResults,
       });
-
       return { jobId, queued: true, status: "generating" };
-    } catch (error) {
+    } catch (queueError) {
+      logger.warn({ err: queueError, interviewId }, "Redis unavailable, falling back to synchronous report generation");
+      // Reset status so synchronous path can proceed
       await updateInterview(interviewId, { status: "completed" }).catch(() => {});
-      logger.error({ err: error, interviewId }, "failed to queue AI report job");
-      throw error;
     }
+
+    // Synchronous fallback when Redis/queue is unavailable
+    return generateReport(interviewId, { background: false });
   }
 
   // Synchronous generation (fallback)
