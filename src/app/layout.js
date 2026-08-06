@@ -22,6 +22,8 @@ export default function RootLayout({ children }) {
         <Toaster
           theme="dark"
           position="bottom-right"
+          expand={true}
+          visibleToasts={4}
           toastOptions={{
             style: {
               background: "rgba(10, 8, 24, 0.95)",
