@@ -629,3 +629,143 @@ Based on the CodRoom real-time technical interview platform project, here are co
   The architecture combines persistent relational storage for durability with in-memory and Redis structures for low-latency real-time
   collaboration, using Prisma as the ORM layer for type-safe database access.
 
+
+
+---
+
+### Question 21: Docker Commands & DevOps Infrastructure
+**Question:** Walk through all the Docker commands used in CodRoom, what each does, and explain the full DevOps stack powering the project.
+
+**Expected Answer:**
+
+#### Docker Commands
+
+**1. Building Sandbox Images (`scripts/build-sandbox-images.sh`)**
+```bash
+docker build -t codroom-node   -f Dockerfile.sandbox-node   .
+docker build -t codroom-ts     -f Dockerfile.sandbox-ts     .
+docker build -t codroom-python -f Dockerfile.sandbox-python .
+docker build -t codroom-java   -f Dockerfile.sandbox-java   .
+docker build -t codroom-cpp    -f Dockerfile.sandbox-cpp    .
+docker build -t codroom-go     -f Dockerfile.sandbox-go     .
+docker build -t codroom-rust   -f Dockerfile.sandbox-rust   .
+```
+- Why: Each language needs its own isolated image to safely run user-submitted code.
+
+**2. Running Code Execution Containers (`server/executor.mjs`)**
+```bash
+docker run --rm \
+  --network none \
+  --memory 128m \
+  --cpus 0.5 \
+  --read-only \
+  --tmpfs /tmp:size=32m \
+  --cap-drop ALL \
+  --no-new-privileges \
+  --pids-limit 50 \
+  --stop-timeout 2 \
+  --ulimit nproc=50 \
+  --ulimit cpu=5 \
+  --memory-swap 128m \
+  --name codroom_<id> \
+  --volume /tmp/codroom/file.py:/sandbox/file.py:ro \
+  --workdir /sandbox \
+  codroom-python python file.py
+```
+- Why: Every user code execution spawns a fresh container with extreme security restrictions — no network, no root, no persistence, strict resource caps.
+
+**3. Cleanup After Execution**
+```bash
+docker rm -f codroom_<id>
+```
+- Why: Force-removes the container after execution or on timeout to prevent resource leaks.
+
+**4. Version Detection**
+```bash
+docker version --format {{.Server.Version}}
+```
+- Why: At startup, the executor checks Docker's version to know which security flags are supported (e.g., `--pids-limit` added in Docker 1.10).
+
+**5. Docker Compose — Dev**
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+- Starts: `postgres:16-alpine` (port 5432) and `redis:7-alpine` (port 6379) with persistent volumes. App runs locally with `npm run dev`.
+
+**6. Docker Compose — Production**
+```bash
+docker-compose -f docker-compose.prod.yml up
+```
+- Starts 4 services: Next.js app (port 3000), Socket.IO server (port 3001), postgres with health checks, redis with health checks.
+
+**7. Docker Compose — Monitoring**
+```bash
+docker-compose -f docker-compose.monitoring.yml up
+```
+- Starts full observability stack: Prometheus (9090), Grafana (3030), node-exporter (9100), cAdvisor (8080), Alertmanager (9093), Loki (3100), Promtail.
+
+---
+
+#### Dockerfiles — Purpose of Each
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Dev/general — multi-stage, runs Next.js + Socket.IO together |
+| `Dockerfile.prod` | Production Next.js only (node:20-alpine, standalone output) |
+| `Dockerfile.socket` | Production Socket.IO server only (port 3001) |
+| `Dockerfile.sandbox` | Base sandbox (node + tsx, non-root user) |
+| `Dockerfile.sandbox-python` | Python 3.12 sandbox |
+| `Dockerfile.sandbox-node` | Node.js 20 sandbox |
+| `Dockerfile.sandbox-ts` | TypeScript sandbox (tsx runner) |
+| `Dockerfile.sandbox-java` | Java 21 sandbox (eclipse-temurin) |
+| `Dockerfile.sandbox-cpp` | C++ sandbox (alpine + g++) |
+| `Dockerfile.sandbox-go` | Go 1.22 sandbox |
+| `Dockerfile.sandbox-rust` | Rust 1.77 sandbox |
+
+All sandbox images create a non-root `sandbox` user — code never runs as root.
+
+---
+
+#### CI/CD — GitHub Actions (`.github/workflows/`)
+
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `deploy.yml` | push to `main` | Test → Build Docker images → Push to GHCR → Deploy to EC2 via SSH → Smoke test |
+| `ci-cd.yml` | PR to `main` | Test → Build → Trivy security scan → Deploy staging/prod → Smoke tests |
+| `ci.yml` | PRs | Runs tests only |
+| `production.yml` | manual/push | Production-specific pipeline |
+| `security.yml` | scheduled | Security scanning |
+
+In CI, postgres and redis run as GitHub Actions service containers (Docker under the hood).
+
+---
+
+#### Infrastructure as Code
+
+- **Terraform** (`terraform/main.tf`) — provisions AWS: VPC, subnets, RDS PostgreSQL, ElastiCache Redis, ECS cluster, ALB, ACM certs, Secrets Manager
+- **Kubernetes** (`k8s/production.yaml`) — Deployments, Services, Ingress (nginx), HPA (auto-scales app 3→10 pods, socket 2→6 pods)
+- **AWS ECS** (`aws-ecs-task-definition.json`) — Fargate task definition running Next.js + Socket.IO as a sidecar pair
+
+#### Process Management
+- **PM2** (`ecosystem.config.cjs`) — keeps Socket.IO server alive on EC2, with `pm2 restart` on every deploy
+
+#### Monitoring Stack
+- Prometheus + Grafana + Loki + Promtail + Alertmanager + cAdvisor + node-exporter — full metrics, logs, and alerting
+
+---
+
+#### Full DevOps Flow
+
+```
+Dev:     docker-compose.dev.yml (postgres + redis only)
+          ↓
+CI:      GitHub Actions spins up postgres/redis as service containers → runs tests
+          ↓
+Build:   docker build → push images to GHCR (ghcr.io)
+          ↓
+Deploy:  EC2 (PM2) or ECS Fargate or Kubernetes
+          ↓
+Runtime: docker run per code execution request (sandboxed containers)
+          ↓
+Monitor: Prometheus / Grafana stack
+```

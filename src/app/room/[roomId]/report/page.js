@@ -143,8 +143,8 @@ export default function ReportPage() {
             });
           }
           if (r.shareToken) setShareUrl(`${window.location.origin}/share/${r.shareToken}`);
-        } else if (roomData.room.interview?.status === "completed") {
-          // Report not ready yet — start polling
+        } else if (roomData.room.interview?.status === "generating") {
+          // Report is being generated — start polling
           setPolling(true);
         }
       }
@@ -178,7 +178,13 @@ export default function ReportPage() {
         setReport(d.report);
         setPolling(false);
         clearInterval(id);
+        setShowShareModal(true);
+      } else if (reportRes.status !== 404) {
+        // Non-404 error (e.g. auth failure) — stop polling
+        setPolling(false);
+        clearInterval(id);
       }
+      // 404 means still generating — keep polling
     }, 3000);
     return () => clearInterval(id);
   }, [polling, roomId]);
@@ -194,12 +200,19 @@ export default function ReportPage() {
     try {
       const res = await fetch(`/api/interviews/${interviewId}/report`, { 
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ background: true }),
         signal: controller.signal 
       });
       const data = await res.json();
       if (!res.ok) {
         toast.error(data.error || "Failed to generate report", { id: toastId });
         setError(data.error || "Failed to generate report");
+        return;
+      }
+      if (data.status === "generating" || data.queued) {
+        toast.success("AI is analyzing the code…", { id: toastId });
+        setPolling(true);
         return;
       }
       toast.success("Report generated!", { id: toastId });
