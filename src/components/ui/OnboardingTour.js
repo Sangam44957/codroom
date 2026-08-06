@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { X, ChevronRight, ChevronLeft } from "lucide-react";
 
 const TOUR_STEPS = [
@@ -9,52 +9,55 @@ const TOUR_STEPS = [
     description:
       "This quick tour will show you the key areas of the interview room. You can skip at any time.",
     target: null,
-    position: "center",
+    side: "center",
   },
   {
     title: "Problem Panel",
     description:
       "The problem statement lives here. Read the requirements carefully before coding. You can resize this panel by dragging the divider.",
-    target: "problem-panel",
-    position: "right",
+    target: "[data-tour='problem-panel']",
+    side: "right",
   },
   {
     title: "Code Editor",
     description:
       "Write your solution here. Use Ctrl+Enter to run your code. You can switch languages from the dropdown in the top-right of the editor.",
-    target: "editor-panel",
-    position: "right",
+    target: "[data-tour='editor-panel']",
+    side: "right",
   },
   {
     title: "Snippet Library",
     description:
       "Press Ctrl+Shift+S inside the editor to open the snippet library — quickly insert common data structures and algorithm templates.",
-    target: "editor-panel",
-    position: "right",
+    target: "[data-tour='editor-panel']",
+    side: "right",
   },
   {
     title: "Output Panel",
     description:
       "Your code's output and test results appear here after you run your code.",
-    target: "output-panel",
-    position: "top",
+    target: "[data-tour='output-panel']",
+    side: "top",
   },
   {
     title: "Chat & Video",
     description:
       "Use the right panel to chat with your interviewer, see their video feed, or collaborate on the whiteboard.",
-    target: "right-panel",
-    position: "left",
+    target: "[data-tour='right-panel']",
+    side: "left",
   },
   {
     title: "Keyboard Shortcuts",
     description:
       "Press Ctrl+/ anytime to see all keyboard shortcuts. You're all set — good luck! 🚀",
     target: null,
-    position: "center",
+    side: "center",
   },
 ];
 
+const CARD_W = 320;
+const CARD_H = 180; // approximate, used for initial placement
+const GAP = 12;
 const STORAGE_KEY = "codroom_tour_completed";
 
 export function useOnboardingTour(role) {
@@ -76,26 +79,88 @@ export function useOnboardingTour(role) {
 
 export default function OnboardingTour({ onComplete }) {
   const [step, setStep] = useState(0);
+  const [cardStyle, setCardStyle] = useState({ top: "50%", left: "50%", transform: "translate(-50%,-50%)" });
+  const [highlight, setHighlight] = useState(null); // { top, left, width, height }
+  const cardRef = useRef(null);
   const current = TOUR_STEPS[step];
   const isLast = step === TOUR_STEPS.length - 1;
   const isFirst = step === 0;
 
+  useEffect(() => {
+    if (!current.target) {
+      setHighlight(null);
+      setCardStyle({ top: "50%", left: "50%", transform: "translate(-50%,-50%)" });
+      return;
+    }
+
+    const el = document.querySelector(current.target);
+    if (!el) {
+      setHighlight(null);
+      setCardStyle({ top: "50%", left: "50%", transform: "translate(-50%,-50%)" });
+      return;
+    }
+
+    const r = el.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+
+    setHighlight({ top: r.top, left: r.left, width: r.width, height: r.height });
+
+    // Place card adjacent to the target based on preferred side
+    let top, left, transform = "";
+    const cardH = cardRef.current?.offsetHeight || CARD_H;
+
+    if (current.side === "right") {
+      left = Math.min(r.right + GAP, vw - CARD_W - 8);
+      top = r.top + r.height / 2 - cardH / 2;
+    } else if (current.side === "left") {
+      left = Math.max(r.left - CARD_W - GAP, 8);
+      top = r.top + r.height / 2 - cardH / 2;
+    } else if (current.side === "top") {
+      top = Math.max(r.top - cardH - GAP, 8);
+      left = r.left + r.width / 2 - CARD_W / 2;
+    } else {
+      // bottom
+      top = Math.min(r.bottom + GAP, vh - cardH - 8);
+      left = r.left + r.width / 2 - CARD_W / 2;
+    }
+
+    // Clamp within viewport
+    top = Math.max(8, Math.min(top, vh - cardH - 8));
+    left = Math.max(8, Math.min(left, vw - CARD_W - 8));
+
+    setCardStyle({ top, left, transform });
+  }, [step, current.target, current.side]);
+
   return (
     <div className="fixed inset-0 z-[9990] pointer-events-none">
-      {/* Backdrop — only for center steps */}
-      {current.position === "center" && (
-        <div className="absolute inset-0 bg-black/60 pointer-events-auto" />
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50 pointer-events-auto" />
+
+      {/* Spotlight cutout over target */}
+      {highlight && (
+        <div
+          className="absolute rounded-lg ring-2 ring-violet-400/70 shadow-[0_0_0_9999px_rgba(0,0,0,0.55)] pointer-events-none"
+          style={{
+            top: highlight.top - 4,
+            left: highlight.left - 4,
+            width: highlight.width + 8,
+            height: highlight.height + 8,
+            transition: "all 0.25s ease",
+          }}
+        />
       )}
 
       {/* Tour card */}
       <div
-        className={`pointer-events-auto absolute ${positionClass(current.position)} max-w-sm w-full`}
+        ref={cardRef}
+        className="pointer-events-auto absolute"
+        style={{ ...cardStyle, width: CARD_W, transition: "top 0.25s ease, left 0.25s ease" }}
       >
         <div
-          className="bg-[#111118] border border-violet-500/30 rounded-2xl shadow-2xl shadow-black/60 p-5"
+          className="bg-[#111118] border border-violet-500/30 rounded-2xl shadow-2xl shadow-black/60 p-5 relative"
           style={{ backdropFilter: "blur(24px)" }}
         >
-          {/* Top gradient line */}
           <div className="absolute inset-x-0 top-0 h-px rounded-t-2xl bg-gradient-to-r from-transparent via-violet-500/60 to-transparent" />
 
           <div className="flex items-start justify-between gap-3 mb-3">
@@ -114,13 +179,12 @@ export default function OnboardingTour({ onComplete }) {
           </p>
 
           <div className="flex items-center justify-between">
-            {/* Step dots */}
             <div className="flex items-center gap-1">
               {TOUR_STEPS.map((_, i) => (
                 <span
                   key={i}
-                  className={`w-1.5 h-1.5 rounded-full transition-all ${
-                    i === step ? "bg-violet-400 w-3" : "bg-white/20"
+                  className={`h-1.5 rounded-full transition-all ${
+                    i === step ? "bg-violet-400 w-3" : "bg-white/20 w-1.5"
                   }`}
                 />
               ))}
@@ -148,19 +212,4 @@ export default function OnboardingTour({ onComplete }) {
       </div>
     </div>
   );
-}
-
-function positionClass(position) {
-  switch (position) {
-    case "center":
-      return "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-4";
-    case "right":
-      return "top-1/2 -translate-y-1/2 left-[38%] px-4";
-    case "left":
-      return "top-1/2 -translate-y-1/2 right-[20%] px-4";
-    case "top":
-      return "bottom-[14rem] left-1/2 -translate-x-1/2 px-4";
-    default:
-      return "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 px-4";
-  }
 }

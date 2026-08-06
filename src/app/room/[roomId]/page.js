@@ -956,7 +956,7 @@ export default function RoomPage() {
           if (showScratchPad && isInterviewer) {
             return (
               <>
-                <div style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="hidden md:flex flex-shrink-0 overflow-hidden border-r border-white/[0.05] flex-col">
+                <div data-tour="problem-panel" style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="hidden md:flex flex-shrink-0 overflow-hidden border-r border-white/[0.05] flex-col">
                   <ScratchPad language={language} roomId={roomId} />
                 </div>
                 <ResizeDivider onDrag={handleProblemResize} />
@@ -971,7 +971,7 @@ export default function RoomPage() {
           if (!activeProblem) return null;
           return (
             <>
-              <div style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="hidden md:flex flex-shrink-0 overflow-hidden border-r border-white/[0.05] flex-col">
+              <div data-tour="problem-panel" style={{ width: problemWidth, minWidth: 220, maxWidth: 600 }} className="hidden md:flex flex-shrink-0 overflow-hidden border-r border-white/[0.05] flex-col">
                 {allProblems.length > 1 && (
                   <div className="flex border-b border-white/[0.05] flex-shrink-0 overflow-x-auto">
                     {allProblems.map((p, i) => (
@@ -999,7 +999,7 @@ export default function RoomPage() {
         })()}
 
         {/* Editor + Output — hidden on mobile when another tab is active */}
-        <div className={`flex-1 flex flex-col min-w-0 overflow-hidden editor-panel-primary ${
+        <div data-tour="editor-panel" className={`flex-1 flex flex-col min-w-0 overflow-hidden editor-panel-primary ${
           mobileTab !== "editor" ? "hidden md:flex" : "flex"
         }`}>
           <CollabIndicator collabMode={collabMode} />
@@ -1019,7 +1019,7 @@ export default function RoomPage() {
             />
           </div>
           {showOutput && (
-            <div className="h-44 flex-shrink-0 border-t border-white/[0.05] overflow-hidden">
+            <div data-tour="output-panel" className="h-44 flex-shrink-0 border-t border-white/[0.05] overflow-hidden">
               {(() => {
                 const allProblems = room.problems?.length
                   ? room.problems.map((rp) => rp.problem)
@@ -1044,7 +1044,7 @@ export default function RoomPage() {
         </div>
 
         {/* Right panel — hidden on mobile when editor tab is active */}
-        <div className={`flex-shrink-0 flex flex-col border-l border-white/[0.05] bg-[#0f0f17] panel-secondary ${
+        <div data-tour="right-panel" className={`flex-shrink-0 flex flex-col border-l border-white/[0.05] bg-[#0f0f17] panel-secondary ${
           editorFullscreen ? "hidden" : ""
         } ${
           mobileTab === "editor" ? "hidden md:flex md:w-64 xl:w-72" : "flex w-full md:w-64 xl:w-72"
