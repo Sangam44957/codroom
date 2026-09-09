@@ -46,7 +46,7 @@ jobs:
       
       - name: Setup test environment
         run: |
-          cp .env.example .env.test
+          if [ -f .env.example ]; then cp .env.example .env.test; else : > .env.test; fi
           echo "DATABASE_URL=postgresql://postgres:postgres@localhost:5432/codroom_test" >> .env.test
           echo "DIRECT_URL=postgresql://postgres:postgres@localhost:5432/codroom_test" >> .env.test
           echo "REDIS_URL=redis://localhost:6379" >> .env.test
